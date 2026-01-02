@@ -1,0 +1,75 @@
+daemon:
+  log_level: info
+  data_dir: /var/lib/afterdark
+  pid_file: /var/run/afterdark/darkd.pid
+
+api:
+  afterdark:
+    url: https://api.afterdarksys.com
+    timeout: 30s
+    retry:
+      max_attempts: 3
+      initial_wait: 1s
+      max_wait: 30s
+
+  darkapi:
+    url: https://api.darkapi.io
+    api_key: ${DARKAPI_API_KEY}
+    timeout: 30s
+    retry:
+      max_attempts: 3
+      initial_wait: 1s
+      max_wait: 30s
+
+  dnsscience:
+    url: https://api.dnsscience.io
+    timeout: 10s
+    retry:
+      max_attempts: 2
+      initial_wait: 500ms
+      max_wait: 5s
+
+  veribits:
+    url: https://api.veribits.com
+    timeout: 20s
+
+services:
+  patch_monitor:
+    enabled: true
+    scan_interval: 1h
+    auto_install_windows: true
+    urgency_tiers:
+      critical: 24h          # 1 day - MAJOR, CRITICAL, EXPLOIT ACTIVE
+      kernel_network: 48h    # 2 days - Network or Kernel
+      software: 72h          # 3 days - Software patches
+      windows_standard: 168h # 7 days - Windows patches
+
+  threat_intel:
+    enabled: true
+    sync_interval: 6h
+    cache_ttl: 24h
+
+  baseline_scanner:
+    enabled: true
+    scan_interval: 24h
+
+  network_monitor:
+    enabled: true
+    dns_servers:
+      - cache01.dnsscience.io
+      - cache02.dnsscience.io
+      - cache03.dnsscience.io
+      - cache04.dnsscience.io
+    allow_icmp: false
+    block_fragmentation: true
+
+storage:
+  backend: json
+  path: /var/lib/afterdark/data
+  backup_enabled: true
+  backup_retention: 720h # 30 days
+
+ipc:
+  socket_path: /var/run/afterdark/darkd.sock
+  auth_enabled: true
+  auth_token_file: /var/lib/afterdark/.auth_token

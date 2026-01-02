@@ -1,0 +1,45 @@
+Project: aftardark-darkd
+Language: Go
+OS Support: Mac OS X, Windows 10, RHEL/Rocky Linux, Debian, Ubuntu
+Integration: api.afterdarksys.com , api.darkapi.io, api.dnsscience.io, api.veribits.com
+Base Directory: /Users/ryan/development
+Project Directory is empty, this is new: /Users/ryan/development/afterdark-darkd
+Use api.changes.afterdarksys.com to make tickets
+Use the enterprise-systems-architect + the ads-ai-staff engineering team to complete
+OS Support: OS X, Windows, Linux
+Endpoint API api.afterdarksys.com/path/to/endpoint-api
+- full darkapi.io integration
+- pull bad domain lists
+- pull bad IP lists
+- Endpoint API:
+   - collect OS X Windows Patch data installed va not
+   - flag systems not updated within:
+   1 days - MAJOR, CRITICAL,EXPLOIT ACTIVE
+   2 days - Network or Kernel related patches
+   3 days - Software patches
+   7 days - check Windows patches -> install
+   - initial baseline checks installed applications:
+     - missing patches? 
+     - exploitable
+- Store data in large JSON Structure
+- HTTP GET - api.afterdarksys.com -> get API info
+- HTTP GET -> api.darkapi.io
+- Use ALL Intel to:
+
+   - Make report on is ODX or Windows patches
+   - What patches are missin?
+   - Do they have public internet IP's?
+- Settings:
+   - Traceroute / Ping allowed: yes / no
+   - Fragmented IP: yes or no
+   - Use 3rd part DNS ? enter IP:
+   - default to using cache0{1,2,3,4}.dnsscience.io
+- afterdark-darkd -> main daemon
+  afterdark-darkdadm -> admin CLI
+  api.darkapi.io -> API Key, grant yourself one
+  api.darkapi.io -> Key should enable access our OWN data intel systems from veribits and dnsscience
+- darkapi CLI for end users
+- integration with: systemapi.io, computeapi.io, 
+- integration with: dnsscience.io, afterdarksys.com
+- integrate with planetapi.io, nextapi.io
+- integrate with: aeims.app, oci-scm,oci-observability,  
