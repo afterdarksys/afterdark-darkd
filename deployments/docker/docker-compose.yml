@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  afterdark-darkd:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile
+    container_name: afterdark-darkd
+    restart: unless-stopped
+    environment:
+      - DARKAPI_API_KEY=${DARKAPI_API_KEY}
+      - AFTERDARK_LOG_LEVEL=info
+    volumes:
+      - afterdark-data:/var/lib/afterdark
+      - afterdark-logs:/var/log/afterdark
+      - ./darkd.yaml:/etc/afterdark/darkd.yaml:ro
+    networks:
+      - afterdark
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/darkapi", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  afterdark-data:
+  afterdark-logs:
+
+networks:
+  afterdark:
+    driver: bridge

@@ -1,0 +1,51 @@
+---
+- name: Deploy AfterDark-DarkD
+  hosts: all
+  become: yes
+
+  vars:
+    afterdark_download_url: "https://releases.afterdarksys.com/darkd/{{ afterdark_version }}"
+
+  pre_tasks:
+    - name: Validate DARKAPI_API_KEY is set
+      assert:
+        that:
+          - darkapi_key is defined
+          - darkapi_key | length > 0
+        fail_msg: "DARKAPI_API_KEY environment variable must be set"
+
+  tasks:
+    - name: Include OS-specific variables
+      include_vars: "{{ item }}"
+      with_first_found:
+        - "vars/{{ ansible_os_family | lower }}.yml"
+        - "vars/default.yml"
+
+    - name: Deploy to Linux
+      include_tasks: tasks/linux.yml
+      when: ansible_system == "Linux"
+
+    - name: Deploy to macOS
+      include_tasks: tasks/macos.yml
+      when: ansible_system == "Darwin"
+
+    - name: Deploy to Windows
+      include_tasks: tasks/windows.yml
+      when: ansible_system == "Win32NT"
+
+  handlers:
+    - name: restart afterdark-darkd
+      service:
+        name: afterdark-darkd
+        state: restarted
+      when: ansible_system == "Linux"
+
+    - name: restart afterdark-darkd macos
+      command: launchctl kickstart -k system/com.afterdarksys.darkd
+      when: ansible_system == "Darwin"
+
+    - name: restart afterdark-darkd windows
+      win_service:
+        name: AfterDarkDarkD
+        state: restarted
+      when: ansible_system == "Win32NT"

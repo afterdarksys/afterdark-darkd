@@ -1,0 +1,80 @@
+---
+- name: Create afterdark group
+  group:
+    name: afterdark
+    system: yes
+
+- name: Create afterdark user
+  user:
+    name: afterdark
+    group: afterdark
+    system: yes
+    shell: /sbin/nologin
+    home: "{{ afterdark_data_dir }}"
+    create_home: no
+
+- name: Create directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: afterdark
+    group: afterdark
+    mode: '0750'
+  loop:
+    - "{{ afterdark_config_dir }}"
+    - "{{ afterdark_data_dir }}"
+    - "{{ afterdark_data_dir }}/data"
+    - "{{ afterdark_log_dir }}"
+    - /var/run/afterdark
+
+- name: Download afterdark-darkd binary
+  get_url:
+    url: "{{ afterdark_download_url }}/afterdark-darkd-linux-{{ ansible_architecture }}"
+    dest: /usr/local/bin/afterdark-darkd
+    mode: '0755'
+    owner: root
+    group: root
+  notify: restart afterdark-darkd
+
+- name: Download afterdark-darkdadm binary
+  get_url:
+    url: "{{ afterdark_download_url }}/afterdark-darkdadm-linux-{{ ansible_architecture }}"
+    dest: /usr/local/bin/afterdark-darkdadm
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Download darkapi binary
+  get_url:
+    url: "{{ afterdark_download_url }}/darkapi-linux-{{ ansible_architecture }}"
+    dest: /usr/local/bin/darkapi
+    mode: '0755'
+    owner: root
+    group: root
+
+- name: Deploy configuration
+  template:
+    src: templates/darkd.yaml.j2
+    dest: "{{ afterdark_config_dir }}/darkd.yaml"
+    owner: afterdark
+    group: afterdark
+    mode: '0640'
+  notify: restart afterdark-darkd
+
+- name: Deploy systemd service
+  template:
+    src: templates/afterdark-darkd.service.j2
+    dest: /etc/systemd/system/afterdark-darkd.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify:
+    - reload systemd
+    - restart afterdark-darkd
+
+- name: Enable and start service
+  systemd:
+    name: afterdark-darkd
+    enabled: yes
+    state: started
+    daemon_reload: yes

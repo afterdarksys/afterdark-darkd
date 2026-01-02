@@ -1,0 +1,106 @@
+# AfterDark-DarkD TODO
+
+Current development priorities and roadmap.
+
+## In Progress
+
+- [ ] Platform-specific patch enumeration
+  - [ ] macOS: softwareupdate parsing
+  - [ ] Windows: WMI/Windows Update API
+  - [ ] Linux: apt/yum/dnf integration
+
+## High Priority
+
+### Phase 2: Platform Implementation
+- [ ] TICKET-010: Complete macOS platform support
+- [ ] TICKET-011: Complete Windows platform support
+- [ ] TICKET-012: Complete Debian/Ubuntu support
+- [ ] TICKET-013: Complete RHEL/Rocky support
+- [ ] TICKET-014: Cross-platform integration tests
+
+### Phase 3: IPC Layer
+- [ ] TICKET-043: gRPC/protobuf definitions
+- [ ] TICKET-044: IPC server implementation
+- [ ] TICKET-045: IPC authentication (token-based)
+- [ ] TICKET-046: Connect admin CLI to daemon
+- [ ] TICKET-048: Connect user CLI to daemon
+
+### Phase 4: Service Installers
+- [ ] TICKET-050: macOS launchd installer
+- [ ] TICKET-051: Windows service installer
+- [ ] TICKET-052: Linux systemd installer
+- [ ] TICKET-053: Package installers (.pkg, .msi, .deb, .rpm)
+
+## Medium Priority
+
+### Testing
+- [ ] TICKET-054: Integration test suite (>80% coverage)
+- [ ] TICKET-055: Performance benchmarks
+- [ ] TICKET-056: Security testing
+- [ ] TICKET-057: E2E test scenarios
+
+### Additional API Integrations
+- [ ] TICKET-024: DNSScience.io client
+- [ ] TICKET-025: Veribits.com client
+- [ ] TICKET-026: systemapi.io, computeapi.io, planetapi.io
+
+### Reporting
+- [ ] TICKET-040: Report generation (JSON, HTML, PDF)
+- [ ] TICKET-041: Compliance reports
+- [ ] TICKET-042: Exposure analysis reports
+
+## Low Priority
+
+### Infrastructure
+- [ ] TICKET-061: Docker deployment
+- [ ] TICKET-062: Kubernetes deployment (Helm chart)
+- [ ] TICKET-063: Terraform modules (AWS, Azure, GCP)
+
+### Documentation
+- [ ] TICKET-058: User documentation
+- [ ] TICKET-059: Operator documentation
+- [ ] TICKET-060: Developer documentation
+
+## Completed
+
+- [x] TICKET-001: Project structure and Go module
+- [x] TICKET-002: Build system and Makefile
+- [x] TICKET-004: Daemon lifecycle management
+- [x] TICKET-005: Configuration management
+- [x] TICKET-006: Logging infrastructure
+- [x] TICKET-007: Service interface and registry
+- [x] TICKET-015: Storage interface
+- [x] TICKET-016: JSON file storage
+- [x] TICKET-020: Base HTTP client
+- [x] TICKET-022: AfterDark API client
+- [x] TICKET-023: DarkAPI.io client
+- [x] TICKET-027: Patch monitor service
+- [x] TICKET-031: Threat intel service
+- [x] TICKET-034: Baseline scanner service
+- [x] TICKET-037: Network monitor service
+
+## Future Versions
+
+### v1.1
+- Dashboard web UI
+- Email alert integration
+- Advanced compliance policies
+- PDF report export
+
+### v1.2
+- Multi-endpoint management console
+- Centralized policy management
+- Advanced threat correlation
+- Machine learning anomaly detection
+
+### v2.0
+- Full EDR capabilities
+- Real-time threat blocking
+- Network traffic analysis
+- SIEM integration
+
+---
+
+See ROADMAP.md for full 69-ticket breakdown with effort estimates.
+
+After Dark Systems, LLC

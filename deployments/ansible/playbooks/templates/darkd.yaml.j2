@@ -1,0 +1,66 @@
+daemon:
+  log_level: info
+  data_dir: {{ afterdark_data_dir }}
+  pid_file: /var/run/afterdark/darkd.pid
+
+api:
+  afterdark:
+    url: https://api.afterdarksys.com
+    timeout: 30s
+    retry:
+      max_attempts: 3
+      initial_wait: 1s
+      max_wait: 30s
+
+  darkapi:
+    url: https://api.darkapi.io
+    api_key: {{ darkapi_key }}
+    timeout: 30s
+    retry:
+      max_attempts: 3
+      initial_wait: 1s
+      max_wait: 30s
+
+  dnsscience:
+    url: https://api.dnsscience.io
+    timeout: 10s
+
+services:
+  patch_monitor:
+    enabled: true
+    scan_interval: 1h
+    auto_install_windows: {{ auto_install_windows | default(false) | lower }}
+    urgency_tiers:
+      critical: 24h
+      kernel_network: 48h
+      software: 72h
+      windows_standard: 168h
+
+  threat_intel:
+    enabled: true
+    sync_interval: 6h
+    cache_ttl: 24h
+
+  baseline_scanner:
+    enabled: true
+    scan_interval: 24h
+
+  network_monitor:
+    enabled: {{ network_monitor_enabled | default(true) | lower }}
+    dns_servers:
+{% for server in dns_servers | default(['cache01.dnsscience.io', 'cache02.dnsscience.io', 'cache03.dnsscience.io', 'cache04.dnsscience.io']) %}
+      - {{ server }}
+{% endfor %}
+    allow_icmp: {{ allow_icmp | default(false) | lower }}
+    block_fragmentation: {{ block_fragmentation | default(true) | lower }}
+
+storage:
+  backend: json
+  path: {{ afterdark_data_dir }}/data
+  backup_enabled: true
+  backup_retention: 720h
+
+ipc:
+  socket_path: /var/run/afterdark/darkd.sock
+  auth_enabled: true
+  auth_token_file: {{ afterdark_data_dir }}/.auth_token

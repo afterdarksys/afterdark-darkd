@@ -1,0 +1,284 @@
+# Installation Guide
+
+## Prerequisites
+
+### Build Requirements
+
+- Go 1.21 or later
+- Git
+- Make
+- Platform-specific:
+  - **macOS**: Xcode Command Line Tools
+  - **Windows**: Visual Studio Build Tools or MinGW-w64
+  - **Linux**: GCC, build-essential
+
+### Runtime Requirements
+
+- Root/Administrator privileges (for system configuration)
+- Network access to After Dark Systems APIs
+- DarkAPI.io API key
+
+## Building from Source
+
+### Clone and Build
+
+```bash
+git clone https://github.com/afterdarksys/afterdark-darkd.git
+cd afterdark-darkd
+
+# Download dependencies
+make deps
+
+# Build all binaries
+make build
+
+# Run tests
+make test
+```
+
+### Cross-Platform Builds
+
+```bash
+# Build for all supported platforms
+make build-all
+
+# Binaries output to dist/
+ls dist/
+```
+
+## Installation
+
+### macOS
+
+```bash
+# Install binaries
+sudo make install
+
+# Create directories
+sudo mkdir -p /etc/afterdark /var/lib/afterdark /var/log/afterdark /var/run/afterdark
+
+# Copy configuration
+sudo cp configs/darkd.yaml.example /etc/afterdark/darkd.yaml
+
+# Edit configuration
+sudo vim /etc/afterdark/darkd.yaml
+
+# Install launchd service
+sudo cp scripts/service/launchd/com.afterdarksys.darkd.plist /Library/LaunchDaemons/
+sudo launchctl load /Library/LaunchDaemons/com.afterdarksys.darkd.plist
+
+# Start service
+sudo launchctl start com.afterdarksys.darkd
+```
+
+### Linux (systemd)
+
+```bash
+# Install binaries
+sudo make install
+
+# Create directories
+sudo mkdir -p /etc/afterdark /var/lib/afterdark /var/log/afterdark /var/run/afterdark
+
+# Copy configuration
+sudo cp configs/darkd.yaml.example /etc/afterdark/darkd.yaml
+
+# Edit configuration
+sudo vim /etc/afterdark/darkd.yaml
+
+# Install systemd service
+sudo cp scripts/service/systemd/afterdark-darkd.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable afterdark-darkd
+sudo systemctl start afterdark-darkd
+
+# Check status
+sudo systemctl status afterdark-darkd
+```
+
+### Windows
+
+```powershell
+# Run as Administrator
+
+# Create directories
+New-Item -ItemType Directory -Path "C:\ProgramData\AfterDark" -Force
+New-Item -ItemType Directory -Path "C:\ProgramData\AfterDark\data" -Force
+New-Item -ItemType Directory -Path "C:\ProgramData\AfterDark\logs" -Force
+
+# Copy binaries
+Copy-Item afterdark-darkd.exe "C:\Program Files\AfterDark\"
+Copy-Item afterdark-darkdadm.exe "C:\Program Files\AfterDark\"
+Copy-Item darkapi.exe "C:\Program Files\AfterDark\"
+
+# Copy configuration
+Copy-Item configs\darkd.yaml.example "C:\ProgramData\AfterDark\darkd.yaml"
+
+# Edit configuration
+notepad "C:\ProgramData\AfterDark\darkd.yaml"
+
+# Install as Windows service
+sc.exe create "AfterDarkDarkD" binPath= "C:\Program Files\AfterDark\afterdark-darkd.exe --config C:\ProgramData\AfterDark\darkd.yaml" start= auto
+sc.exe description "AfterDarkDarkD" "After Dark Systems Endpoint Security Daemon"
+
+# Start service
+sc.exe start AfterDarkDarkD
+```
+
+## Configuration
+
+### Minimal Configuration
+
+```yaml
+daemon:
+  log_level: info
+  data_dir: /var/lib/afterdark
+  pid_file: /var/run/afterdark/darkd.pid
+
+api:
+  darkapi:
+    url: https://api.darkapi.io
+    api_key: ${DARKAPI_API_KEY}
+
+services:
+  patch_monitor:
+    enabled: true
+  threat_intel:
+    enabled: true
+  network_monitor:
+    enabled: true
+```
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `DARKAPI_API_KEY` | DarkAPI.io API key |
+| `AFTERDARK_CONFIG` | Override config file path |
+| `AFTERDARK_LOG_LEVEL` | Override log level |
+
+### API Key Setup
+
+1. Log in to https://console.darkapi.io
+2. Navigate to API Keys
+3. Create a new key with "Endpoint Agent" permissions
+4. Set the environment variable or add to config
+
+## Verification
+
+### Check Daemon Status
+
+```bash
+# Linux/macOS
+afterdark-darkdadm status
+
+# Windows
+& "C:\Program Files\AfterDark\afterdark-darkdadm.exe" status
+```
+
+### Check User CLI
+
+```bash
+darkapi status
+```
+
+### View Logs
+
+```bash
+# Linux/macOS
+tail -f /var/log/afterdark/darkd.log
+
+# Windows
+Get-Content "C:\ProgramData\AfterDark\logs\darkd.log" -Wait
+```
+
+## Automated Deployment
+
+### Ansible
+
+```bash
+cd deployments/ansible
+
+# Edit inventory
+vim inventory/hosts.yml
+
+# Run playbook
+ansible-playbook -i inventory/hosts.yml playbooks/deploy.yml
+```
+
+### Terraform
+
+```bash
+cd deployments/terraform/aws
+
+# Initialize
+terraform init
+
+# Plan
+terraform plan -var="darkapi_key=$DARKAPI_API_KEY"
+
+# Apply
+terraform apply -var="darkapi_key=$DARKAPI_API_KEY"
+```
+
+## Uninstallation
+
+### macOS
+
+```bash
+sudo launchctl stop com.afterdarksys.darkd
+sudo launchctl unload /Library/LaunchDaemons/com.afterdarksys.darkd.plist
+sudo rm /Library/LaunchDaemons/com.afterdarksys.darkd.plist
+sudo rm /usr/local/bin/afterdark-darkd /usr/local/bin/afterdark-darkdadm /usr/local/bin/darkapi
+sudo rm -rf /etc/afterdark /var/lib/afterdark /var/log/afterdark
+```
+
+### Linux
+
+```bash
+sudo systemctl stop afterdark-darkd
+sudo systemctl disable afterdark-darkd
+sudo rm /etc/systemd/system/afterdark-darkd.service
+sudo systemctl daemon-reload
+sudo rm /usr/local/bin/afterdark-darkd /usr/local/bin/afterdark-darkdadm /usr/local/bin/darkapi
+sudo rm -rf /etc/afterdark /var/lib/afterdark /var/log/afterdark
+```
+
+### Windows
+
+```powershell
+sc.exe stop AfterDarkDarkD
+sc.exe delete AfterDarkDarkD
+Remove-Item -Recurse "C:\Program Files\AfterDark"
+Remove-Item -Recurse "C:\ProgramData\AfterDark"
+```
+
+## Troubleshooting
+
+### Daemon Won't Start
+
+1. Check configuration: `afterdark-darkd --config /etc/afterdark/darkd.yaml --validate`
+2. Check permissions on data directories
+3. Check API key is set correctly
+4. Review logs for errors
+
+### No Threat Data
+
+1. Verify API key has correct permissions
+2. Check network connectivity to api.darkapi.io
+3. Run manual sync: `afterdark-darkdadm threats sync`
+
+### Patch Scan Fails
+
+1. Ensure running with root/admin privileges
+2. Check platform-specific tools are available (softwareupdate, wuauclt, apt)
+
+## Support
+
+- Documentation: https://docs.afterdarksys.com/darkd
+- Issues: https://github.com/afterdarksys/afterdark-darkd/issues
+- Email: support@afterdarksys.com
+
+---
+
+After Dark Systems, LLC

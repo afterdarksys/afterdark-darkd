@@ -1,0 +1,62 @@
+---
+- name: Create directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: wheel
+    mode: '0750'
+  loop:
+    - "{{ afterdark_config_dir }}"
+    - "{{ afterdark_data_dir }}"
+    - "{{ afterdark_data_dir }}/data"
+    - "{{ afterdark_log_dir }}"
+    - /var/run/afterdark
+
+- name: Download afterdark-darkd binary
+  get_url:
+    url: "{{ afterdark_download_url }}/afterdark-darkd-darwin-{{ 'arm64' if ansible_architecture == 'arm64' else 'amd64' }}"
+    dest: /usr/local/bin/afterdark-darkd
+    mode: '0755'
+    owner: root
+    group: wheel
+  notify: restart afterdark-darkd macos
+
+- name: Download afterdark-darkdadm binary
+  get_url:
+    url: "{{ afterdark_download_url }}/afterdark-darkdadm-darwin-{{ 'arm64' if ansible_architecture == 'arm64' else 'amd64' }}"
+    dest: /usr/local/bin/afterdark-darkdadm
+    mode: '0755'
+    owner: root
+    group: wheel
+
+- name: Download darkapi binary
+  get_url:
+    url: "{{ afterdark_download_url }}/darkapi-darwin-{{ 'arm64' if ansible_architecture == 'arm64' else 'amd64' }}"
+    dest: /usr/local/bin/darkapi
+    mode: '0755'
+    owner: root
+    group: wheel
+
+- name: Deploy configuration
+  template:
+    src: templates/darkd.yaml.j2
+    dest: "{{ afterdark_config_dir }}/darkd.yaml"
+    owner: root
+    group: wheel
+    mode: '0640'
+  notify: restart afterdark-darkd macos
+
+- name: Deploy launchd plist
+  template:
+    src: templates/com.afterdarksys.darkd.plist.j2
+    dest: /Library/LaunchDaemons/com.afterdarksys.darkd.plist
+    owner: root
+    group: wheel
+    mode: '0644'
+  notify: restart afterdark-darkd macos
+
+- name: Load launchd service
+  command: launchctl load /Library/LaunchDaemons/com.afterdarksys.darkd.plist
+  args:
+    creates: /var/run/afterdark/darkd.pid

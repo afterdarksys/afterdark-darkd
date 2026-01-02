@@ -1,0 +1,61 @@
+---
+- name: Uninstall AfterDark-DarkD
+  hosts: all
+  become: yes
+
+  tasks:
+    - name: Uninstall from Linux
+      include_tasks: tasks/uninstall-linux.yml
+      when: ansible_system == "Linux"
+
+    - name: Uninstall from macOS
+      include_tasks: tasks/uninstall-macos.yml
+      when: ansible_system == "Darwin"
+
+    - name: Uninstall from Windows
+      include_tasks: tasks/uninstall-windows.yml
+      when: ansible_system == "Win32NT"
+
+---
+# tasks/uninstall-linux.yml
+- name: Stop and disable service
+  systemd:
+    name: afterdark-darkd
+    state: stopped
+    enabled: no
+  ignore_errors: yes
+
+- name: Remove systemd service
+  file:
+    path: /etc/systemd/system/afterdark-darkd.service
+    state: absent
+
+- name: Reload systemd
+  systemd:
+    daemon_reload: yes
+
+- name: Remove binaries
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /usr/local/bin/afterdark-darkd
+    - /usr/local/bin/afterdark-darkdadm
+    - /usr/local/bin/darkapi
+
+- name: Remove directories (optional)
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ afterdark_config_dir }}"
+    - "{{ afterdark_data_dir }}"
+    - "{{ afterdark_log_dir }}"
+    - /var/run/afterdark
+  when: remove_data | default(false) | bool
+
+- name: Remove afterdark user
+  user:
+    name: afterdark
+    state: absent
+  when: remove_data | default(false) | bool

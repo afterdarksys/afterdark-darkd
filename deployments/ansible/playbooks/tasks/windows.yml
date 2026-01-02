@@ -1,0 +1,47 @@
+---
+- name: Create directories
+  win_file:
+    path: "{{ item }}"
+    state: directory
+  loop:
+    - "{{ afterdark_install_dir }}"
+    - "{{ afterdark_config_dir }}"
+    - "{{ afterdark_config_dir }}\\data"
+    - "{{ afterdark_config_dir }}\\logs"
+
+- name: Download afterdark-darkd binary
+  win_get_url:
+    url: "{{ afterdark_download_url }}/afterdark-darkd-windows-amd64.exe"
+    dest: "{{ afterdark_install_dir }}\\afterdark-darkd.exe"
+  notify: restart afterdark-darkd windows
+
+- name: Download afterdark-darkdadm binary
+  win_get_url:
+    url: "{{ afterdark_download_url }}/afterdark-darkdadm-windows-amd64.exe"
+    dest: "{{ afterdark_install_dir }}\\afterdark-darkdadm.exe"
+
+- name: Download darkapi binary
+  win_get_url:
+    url: "{{ afterdark_download_url }}/darkapi-windows-amd64.exe"
+    dest: "{{ afterdark_install_dir }}\\darkapi.exe"
+
+- name: Deploy configuration
+  win_template:
+    src: templates/darkd-windows.yaml.j2
+    dest: "{{ afterdark_config_dir }}\\darkd.yaml"
+  notify: restart afterdark-darkd windows
+
+- name: Create Windows service
+  win_service:
+    name: AfterDarkDarkD
+    path: '"{{ afterdark_install_dir }}\afterdark-darkd.exe" --config "{{ afterdark_config_dir }}\darkd.yaml"'
+    display_name: "After Dark Security Daemon"
+    description: "After Dark Systems Endpoint Security Daemon"
+    start_mode: auto
+    state: started
+
+- name: Add install directory to PATH
+  win_path:
+    elements:
+      - "{{ afterdark_install_dir }}"
+    state: present

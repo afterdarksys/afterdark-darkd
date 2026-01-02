@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.afterdarksys.darkd</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/afterdark-darkd</string>
+        <string>--config</string>
+        <string>/etc/afterdark/darkd.yaml</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>WorkingDirectory</key>
+    <string>/var/lib/afterdark</string>
+
+    <key>StandardOutPath</key>
+    <string>/var/log/afterdark/darkd.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/var/log/afterdark/darkd.error.log</string>
+
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>65536</integer>
+    </dict>
+
+    <key>HardResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>65536</integer>
+    </dict>
+</dict>
+</plist>

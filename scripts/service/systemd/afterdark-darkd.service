@@ -1,0 +1,33 @@
+[Unit]
+Description=After Dark Systems Endpoint Security Daemon
+Documentation=https://docs.afterdarksys.com/darkd
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=afterdark
+Group=afterdark
+ExecStart=/usr/local/bin/afterdark-darkd --config /etc/afterdark/darkd.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=10
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadWritePaths=/var/lib/afterdark /var/log/afterdark /var/run/afterdark
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+[Install]
+WantedBy=multi-user.target
