@@ -1,0 +1,459 @@
+AFTERDARK-DARKD PLUGIN SDK HOWTO
+=================================
+
+This guide explains how to create plugins for afterdark-darkd using the
+Hashicorp go-plugin architecture with gRPC communication.
+
+TABLE OF CONTENTS
+-----------------
+1. Overview
+2. Plugin Types
+3. Quick Start
+4. Service Plugin Guide
+5. Data Source Plugin Guide
+6. Storage Plugin Guide
+7. Reporter Plugin Guide
+8. CLI Plugin Guide
+9. Building and Installing
+10. Configuration
+11. Debugging
+
+1. OVERVIEW
+-----------
+
+afterdark-darkd supports five types of plugins:
+
+- Service:    Add new monitoring/security services to the daemon
+- DataSource: Provide threat intel feeds, API integrations
+- Storage:    Alternative storage backends (databases, cloud)
+- Reporter:   Generate reports in various formats (PDF, HTML, CSV)
+- CLI:        Add commands to the admin and user CLIs
+
+Plugins are standalone executables that communicate with the daemon via
+gRPC over local sockets. This architecture provides:
+
+- Process isolation (plugin crashes don't affect the daemon)
+- Language independence (plugins can be written in any gRPC language)
+- Version independence (plugins can be updated without daemon restart)
+- Security (plugins run with their own privileges)
+
+
+2. PLUGIN TYPES
+---------------
+
+Service Plugin:
+  - Adds monitoring/security capabilities
+  - Has full lifecycle (Start, Stop, Health, Execute)
+  - Can perform periodic tasks
+  - Example: custom vulnerability scanner
+
+DataSource Plugin:
+  - Provides external data feeds
+  - Supports query and subscription patterns
+  - Example: threat intelligence feed
+
+Storage Plugin:
+  - Provides alternative storage backends
+  - Key-value and query interfaces
+  - Example: Redis, PostgreSQL, S3
+
+Reporter Plugin:
+  - Generates reports from security data
+  - Multiple output formats
+  - Example: PDF compliance report generator
+
+CLI Plugin:
+  - Adds commands to darkdadm and darkapi CLIs
+  - Full argument and flag support
+  - Example: custom reporting commands
+
+
+3. QUICK START
+--------------
+
+Import the plugin SDK:
+
+    import sdk "github.com/afterdarksys/afterdark-darkd/pkg/pluginsdk"
+
+Create a service plugin:
+
+    package main
+
+    import (
+        "context"
+        sdk "github.com/afterdarksys/afterdark-darkd/pkg/pluginsdk"
+    )
+
+    type MyPlugin struct {
+        sdk.BaseServicePlugin
+    }
+
+    func (p *MyPlugin) Info() sdk.PluginInfo {
+        return sdk.PluginInfo{
+            Name:        "my-plugin",
+            Version:     "1.0.0",
+            Type:        sdk.PluginTypeService,
+            Description: "My custom plugin",
+            Author:      "Your Name",
+        }
+    }
+
+    func (p *MyPlugin) Execute(ctx context.Context, action string,
+        params map[string]interface{}) (map[string]interface{}, error) {
+        // Your implementation
+        return nil, nil
+    }
+
+    func main() {
+        sdk.ServeServicePlugin(&MyPlugin{})
+    }
+
+Build and install:
+
+    go build -o my-plugin .
+    sudo cp my-plugin /var/lib/afterdark-darkd/plugins/
+    sudo chmod +x /var/lib/afterdark-darkd/plugins/my-plugin
+
+
+4. SERVICE PLUGIN GUIDE
+-----------------------
+
+The ServicePlugin interface:
+
+    type ServicePlugin interface {
+        Info() PluginInfo
+        Configure(config map[string]interface{}) error
+        Start(ctx context.Context) error
+        Stop(ctx context.Context) error
+        Health() PluginHealth
+        Execute(ctx context.Context, action string,
+            params map[string]interface{}) (map[string]interface{}, error)
+    }
+
+Use BaseServicePlugin for default implementations:
+
+    type MyService struct {
+        sdk.BaseServicePlugin
+        // Your fields here
+    }
+
+The BaseServicePlugin provides:
+- Configure(): Stores config, accessible via Config()
+- Start()/Stop(): State management
+- Health(): Basic health reporting
+- SetState(): Update plugin state and message
+
+Override methods as needed:
+
+    func (s *MyService) Start(ctx context.Context) error {
+        // Call base implementation
+        if err := s.BaseServicePlugin.Start(ctx); err != nil {
+            return err
+        }
+        // Your startup logic
+        go s.runBackgroundTask()
+        return nil
+    }
+
+    func (s *MyService) Execute(ctx context.Context, action string,
+        params map[string]interface{}) (map[string]interface{}, error) {
+        switch action {
+        case "scan":
+            return s.performScan(params)
+        case "status":
+            return s.getStatus()
+        default:
+            return nil, fmt.Errorf("unknown action: %s", action)
+        }
+    }
+
+See examples/plugins/hello-service/ for a complete example.
+
+
+5. DATA SOURCE PLUGIN GUIDE
+---------------------------
+
+The DataSourcePlugin interface:
+
+    type DataSourcePlugin interface {
+        Info() PluginInfo
+        Configure(config map[string]interface{}) error
+        Connect(ctx context.Context) error
+        Disconnect(ctx context.Context) error
+        Query(ctx context.Context, query string,
+            params map[string]interface{}) ([]map[string]interface{}, error)
+        Subscribe(ctx context.Context, topic string,
+            handler func(data map[string]interface{})) error
+        Health() PluginHealth
+    }
+
+Example threat intel feed:
+
+    type ThreatFeed struct {
+        sdk.BaseDataSourcePlugin
+        client *http.Client
+    }
+
+    func (f *ThreatFeed) Connect(ctx context.Context) error {
+        f.client = &http.Client{Timeout: 30 * time.Second}
+        f.SetState(sdk.PluginStateRunning, "connected")
+        return nil
+    }
+
+    func (f *ThreatFeed) Query(ctx context.Context, query string,
+        params map[string]interface{}) ([]map[string]interface{}, error) {
+        // Fetch and return threat indicators
+        return f.fetchIndicators(query, params)
+    }
+
+See examples/plugins/threatfeed-datasource/ for a complete example.
+
+
+6. STORAGE PLUGIN GUIDE
+-----------------------
+
+The StoragePlugin interface:
+
+    type StoragePlugin interface {
+        Info() PluginInfo
+        Configure(config map[string]interface{}) error
+        Connect(ctx context.Context) error
+        Disconnect(ctx context.Context) error
+        Get(ctx context.Context, collection, key string) ([]byte, error)
+        Set(ctx context.Context, collection, key string, value []byte) error
+        Delete(ctx context.Context, collection, key string) error
+        List(ctx context.Context, collection, prefix string) ([]string, error)
+        Query(ctx context.Context, collection string,
+            query map[string]interface{}) ([][]byte, error)
+        Health() PluginHealth
+    }
+
+Example Redis storage:
+
+    type RedisStorage struct {
+        sdk.BaseStoragePlugin
+        client *redis.Client
+    }
+
+    func (s *RedisStorage) Get(ctx context.Context,
+        collection, key string) ([]byte, error) {
+        fullKey := collection + ":" + key
+        return s.client.Get(ctx, fullKey).Bytes()
+    }
+
+
+7. REPORTER PLUGIN GUIDE
+------------------------
+
+The ReporterPlugin interface:
+
+    type ReporterPlugin interface {
+        Info() PluginInfo
+        Configure(config map[string]interface{}) error
+        SupportedFormats() []string
+        Generate(ctx context.Context, format string,
+            data map[string]interface{}) ([]byte, error)
+        Health() PluginHealth
+    }
+
+Example PDF reporter:
+
+    type PDFReporter struct {
+        sdk.BaseReporterPlugin
+    }
+
+    func (r *PDFReporter) SupportedFormats() []string {
+        return []string{"pdf", "html"}
+    }
+
+    func (r *PDFReporter) Generate(ctx context.Context, format string,
+        data map[string]interface{}) ([]byte, error) {
+        switch format {
+        case "pdf":
+            return r.generatePDF(data)
+        case "html":
+            return r.generateHTML(data)
+        }
+        return nil, fmt.Errorf("unsupported format: %s", format)
+    }
+
+
+8. CLI PLUGIN GUIDE
+-------------------
+
+The CLIPlugin interface:
+
+    type CLIPlugin interface {
+        Info() PluginInfo
+        Configure(config map[string]interface{}) error
+        Commands() []CLICommand
+        Execute(ctx context.Context, command string, args []string,
+            flags map[string]interface{}) (string, error)
+        Health() PluginHealth
+    }
+
+Define commands:
+
+    func (p *MyCLI) Commands() []sdk.CLICommand {
+        return []sdk.CLICommand{
+            {
+                Name:        "scan",
+                Description: "Run a security scan",
+                Usage:       "scan [target]",
+                Flags: []sdk.CLIFlag{
+                    {
+                        Name:        "output",
+                        Shorthand:   "o",
+                        Description: "Output format",
+                        Type:        "string",
+                        Default:     "json",
+                    },
+                    {
+                        Name:        "verbose",
+                        Shorthand:   "v",
+                        Description: "Verbose output",
+                        Type:        "bool",
+                    },
+                },
+            },
+        }
+    }
+
+Handle execution:
+
+    func (p *MyCLI) Execute(ctx context.Context, command string,
+        args []string, flags map[string]interface{}) (string, error) {
+        switch command {
+        case "scan":
+            target := ""
+            if len(args) > 0 {
+                target = args[0]
+            }
+            format := flags["output"].(string)
+            return p.runScan(target, format)
+        }
+        return "", fmt.Errorf("unknown command: %s", command)
+    }
+
+
+9. BUILDING AND INSTALLING
+--------------------------
+
+Build your plugin:
+
+    go build -o my-plugin .
+
+Install to plugin directory:
+
+    sudo mkdir -p /var/lib/afterdark-darkd/plugins
+    sudo cp my-plugin /var/lib/afterdark-darkd/plugins/
+    sudo chmod +x /var/lib/afterdark-darkd/plugins/my-plugin
+
+Cross-compile for other platforms:
+
+    # Linux
+    GOOS=linux GOARCH=amd64 go build -o my-plugin-linux-amd64 .
+
+    # Windows
+    GOOS=windows GOARCH=amd64 go build -o my-plugin-windows-amd64.exe .
+
+    # macOS ARM
+    GOOS=darwin GOARCH=arm64 go build -o my-plugin-darwin-arm64 .
+
+
+10. CONFIGURATION
+-----------------
+
+Plugins receive configuration via the Configure() method. Configuration
+is passed as a map[string]interface{}.
+
+In darkd.yaml, configure plugins:
+
+    daemon:
+      plugin_dir: /var/lib/afterdark-darkd/plugins
+
+    plugins:
+      my-plugin:
+        api_key: "secret123"
+        endpoint: "https://api.example.com"
+        timeout_seconds: 30
+
+Access in your plugin:
+
+    func (p *MyPlugin) Configure(config map[string]interface{}) error {
+        if err := p.BaseServicePlugin.Configure(config); err != nil {
+            return err
+        }
+
+        if key, ok := config["api_key"].(string); ok {
+            p.apiKey = key
+        }
+
+        if timeout, ok := config["timeout_seconds"].(float64); ok {
+            p.timeout = time.Duration(timeout) * time.Second
+        }
+
+        return nil
+    }
+
+
+11. DEBUGGING
+-------------
+
+Enable debug logging:
+
+    export PLUGIN_LOG_LEVEL=debug
+
+Use the SDK logger:
+
+    logger := sdk.Logger("my-plugin")
+    logger.Info("plugin started", "version", "1.0.0")
+    logger.Debug("processing request", "action", action)
+
+Test your plugin standalone:
+
+    # Run plugin directly (it will wait for daemon connection)
+    ./my-plugin
+
+    # Check if plugin is properly detected
+    afterdark-darkd status --plugins
+
+Common issues:
+
+1. Plugin not loading:
+   - Check file permissions (must be executable)
+   - Check plugin directory path
+   - Check daemon logs for errors
+
+2. gRPC connection failed:
+   - Ensure plugin is compiled for correct OS/arch
+   - Check for port conflicts
+
+3. Configuration not received:
+   - Verify YAML syntax in darkd.yaml
+   - Check plugin name matches config section
+
+
+EXAMPLES
+--------
+
+Complete example plugins are available in:
+
+    examples/plugins/hello-service/       - Service plugin example
+    examples/plugins/threatfeed-datasource/ - Data source plugin example
+
+
+PROTOCOL VERSION
+----------------
+
+Current protocol version: 1
+
+The magic cookie for plugin validation:
+    Key:   AFTERDARK_PLUGIN
+    Value: darkd-v1
+
+
+LICENSE
+-------
+
+MIT License - After Dark Systems, LLC

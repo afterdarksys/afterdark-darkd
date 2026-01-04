@@ -1,0 +1,282 @@
+syntax = "proto3";
+
+package plugin;
+
+option go_package = "github.com/afterdarksys/afterdark-darkd/api/proto/plugin";
+
+// Common messages used across all plugin types
+
+message Empty {}
+
+message PluginInfo {
+  string name = 1;
+  string version = 2;
+  string type = 3;
+  string description = 4;
+  string author = 5;
+  string license = 6;
+  repeated string capabilities = 7;
+}
+
+message PluginHealth {
+  string state = 1;
+  string message = 2;
+  int64 last_check_unix = 3;
+  map<string, string> metrics = 4;
+}
+
+message ConfigureRequest {
+  map<string, string> config = 1;
+  bytes config_json = 2; // For complex nested configs
+}
+
+message ConfigureResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  PluginHealth health = 1;
+}
+
+// Service Plugin
+
+message ServiceStartRequest {}
+
+message ServiceStartResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+message ServiceStopRequest {}
+
+message ServiceStopResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+message ServiceExecuteRequest {
+  string action = 1;
+  bytes params_json = 2;
+}
+
+message ServiceExecuteResponse {
+  bool success = 1;
+  string error = 2;
+  bytes result_json = 3;
+}
+
+service ServicePlugin {
+  rpc Info(Empty) returns (PluginInfo);
+  rpc Configure(ConfigureRequest) returns (ConfigureResponse);
+  rpc Start(ServiceStartRequest) returns (ServiceStartResponse);
+  rpc Stop(ServiceStopRequest) returns (ServiceStopResponse);
+  rpc Health(HealthRequest) returns (HealthResponse);
+  rpc Execute(ServiceExecuteRequest) returns (ServiceExecuteResponse);
+}
+
+// DataSource Plugin
+
+message DataSourceConnectRequest {}
+
+message DataSourceConnectResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+message DataSourceDisconnectRequest {}
+
+message DataSourceDisconnectResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+message DataSourceQueryRequest {
+  string query = 1;
+  bytes params_json = 2;
+}
+
+message DataSourceQueryResponse {
+  bool success = 1;
+  string error = 2;
+  repeated bytes results_json = 3;
+}
+
+message DataSourceSubscribeRequest {
+  string topic = 1;
+}
+
+message DataSourceSubscribeResponse {
+  bytes data_json = 1;
+}
+
+service DataSourcePlugin {
+  rpc Info(Empty) returns (PluginInfo);
+  rpc Configure(ConfigureRequest) returns (ConfigureResponse);
+  rpc Connect(DataSourceConnectRequest) returns (DataSourceConnectResponse);
+  rpc Disconnect(DataSourceDisconnectRequest) returns (DataSourceDisconnectResponse);
+  rpc Query(DataSourceQueryRequest) returns (DataSourceQueryResponse);
+  rpc Subscribe(DataSourceSubscribeRequest) returns (stream DataSourceSubscribeResponse);
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// Storage Plugin
+
+message StorageConnectRequest {}
+
+message StorageConnectResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+message StorageDisconnectRequest {}
+
+message StorageDisconnectResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+message StorageGetRequest {
+  string collection = 1;
+  string key = 2;
+}
+
+message StorageGetResponse {
+  bool success = 1;
+  string error = 2;
+  bytes value = 3;
+  bool found = 4;
+}
+
+message StorageSetRequest {
+  string collection = 1;
+  string key = 2;
+  bytes value = 3;
+}
+
+message StorageSetResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+message StorageDeleteRequest {
+  string collection = 1;
+  string key = 2;
+}
+
+message StorageDeleteResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+message StorageListRequest {
+  string collection = 1;
+  string prefix = 2;
+}
+
+message StorageListResponse {
+  bool success = 1;
+  string error = 2;
+  repeated string keys = 3;
+}
+
+message StorageQueryRequest {
+  string collection = 1;
+  bytes query_json = 2;
+}
+
+message StorageQueryResponse {
+  bool success = 1;
+  string error = 2;
+  repeated bytes results = 3;
+}
+
+service StoragePlugin {
+  rpc Info(Empty) returns (PluginInfo);
+  rpc Configure(ConfigureRequest) returns (ConfigureResponse);
+  rpc Connect(StorageConnectRequest) returns (StorageConnectResponse);
+  rpc Disconnect(StorageDisconnectRequest) returns (StorageDisconnectResponse);
+  rpc Get(StorageGetRequest) returns (StorageGetResponse);
+  rpc Set(StorageSetRequest) returns (StorageSetResponse);
+  rpc Delete(StorageDeleteRequest) returns (StorageDeleteResponse);
+  rpc List(StorageListRequest) returns (StorageListResponse);
+  rpc Query(StorageQueryRequest) returns (StorageQueryResponse);
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// Reporter Plugin
+
+message ReporterFormatsRequest {}
+
+message ReporterFormatsResponse {
+  repeated string formats = 1;
+}
+
+message ReporterGenerateRequest {
+  string format = 1;
+  bytes data_json = 2;
+}
+
+message ReporterGenerateResponse {
+  bool success = 1;
+  string error = 2;
+  bytes report = 3;
+  string content_type = 4;
+}
+
+service ReporterPlugin {
+  rpc Info(Empty) returns (PluginInfo);
+  rpc Configure(ConfigureRequest) returns (ConfigureResponse);
+  rpc SupportedFormats(ReporterFormatsRequest) returns (ReporterFormatsResponse);
+  rpc Generate(ReporterGenerateRequest) returns (ReporterGenerateResponse);
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// CLI Plugin
+
+message CLIFlag {
+  string name = 1;
+  string shorthand = 2;
+  string description = 3;
+  string type = 4;
+  string default_value = 5;
+  bool required = 6;
+}
+
+message CLICommand {
+  string name = 1;
+  string description = 2;
+  string usage = 3;
+  repeated CLIFlag flags = 4;
+  repeated CLICommand subcommands = 5;
+}
+
+message CLICommandsRequest {}
+
+message CLICommandsResponse {
+  repeated CLICommand commands = 1;
+}
+
+message CLIExecuteRequest {
+  string command = 1;
+  repeated string args = 2;
+  map<string, string> flags = 3;
+  bytes flags_json = 4; // For complex flag values
+}
+
+message CLIExecuteResponse {
+  bool success = 1;
+  string error = 2;
+  string output = 3;
+  int32 exit_code = 4;
+}
+
+service CLIPlugin {
+  rpc Info(Empty) returns (PluginInfo);
+  rpc Configure(ConfigureRequest) returns (ConfigureResponse);
+  rpc Commands(CLICommandsRequest) returns (CLICommandsResponse);
+  rpc Execute(CLIExecuteRequest) returns (CLIExecuteResponse);
+  rpc Health(HealthRequest) returns (HealthResponse);
+}

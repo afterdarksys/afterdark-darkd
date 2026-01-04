@@ -42,7 +42,7 @@ Current development priorities and roadmap.
 ### Additional API Integrations
 - [ ] TICKET-024: DNSScience.io client
 - [ ] TICKET-025: Veribits.com client
-- [ ] TICKET-026: systemapi.io, computeapi.io, planetapi.io
+- [ ] TICKET-026: systemapi.io, computeapi.io, planetapi.ai
 
 ### Reporting
 - [ ] TICKET-040: Report generation (JSON, HTML, PDF)

@@ -13,9 +13,10 @@ type Config struct {
 
 // DaemonConfig holds daemon-specific configuration
 type DaemonConfig struct {
-	LogLevel string `yaml:"log_level" json:"log_level"`
-	DataDir  string `yaml:"data_dir" json:"data_dir"`
-	PIDFile  string `yaml:"pid_file" json:"pid_file"`
+	LogLevel  string `yaml:"log_level" json:"log_level"`
+	DataDir   string `yaml:"data_dir" json:"data_dir"`
+	PIDFile   string `yaml:"pid_file" json:"pid_file"`
+	PluginDir string `yaml:"plugin_dir" json:"plugin_dir"`
 }
 
 // APIConfig holds all API endpoint configurations
@@ -105,9 +106,10 @@ type IPCConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Daemon: DaemonConfig{
-			LogLevel: "info",
-			DataDir:  "/var/lib/afterdark",
-			PIDFile:  "/var/run/afterdark/darkd.pid",
+			LogLevel:  "info",
+			DataDir:   "/var/lib/afterdark",
+			PIDFile:   "/var/run/afterdark/darkd.pid",
+			PluginDir: "/var/lib/afterdark-darkd/plugins",
 		},
 		API: APIConfig{
 			AfterDark: EndpointConfig{
