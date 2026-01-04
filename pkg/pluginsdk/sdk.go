@@ -105,6 +105,7 @@ const (
 	PluginTypeStorage    PluginType = "storage"
 	PluginTypeReporter   PluginType = "reporter"
 	PluginTypeCLI        PluginType = "cli"
+	PluginTypeFirewall   PluginType = "firewall"
 )
 
 // Plugin states
@@ -198,6 +199,87 @@ type CLIPlugin interface {
 	Commands() []CLICommand
 	Execute(ctx context.Context, command string, args []string, flags map[string]interface{}) (string, error)
 	Health() PluginHealth
+}
+
+// FirewallRule represents a firewall rule
+type FirewallRule struct {
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	Description   string    `json:"description"`
+	Direction     string    `json:"direction"`      // "inbound", "outbound", "both"
+	Action        string    `json:"action"`         // "allow", "deny", "drop", "reject"
+	Protocol      string    `json:"protocol"`       // "tcp", "udp", "icmp", "any"
+	SourceIP      string    `json:"source_ip"`      // CIDR notation
+	SourcePort    string    `json:"source_port"`    // Port or range
+	DestIP        string    `json:"dest_ip"`
+	DestPort      string    `json:"dest_port"`
+	Interface     string    `json:"interface"`
+	Priority      int       `json:"priority"`
+	Enabled       bool      `json:"enabled"`
+	CreatedAt     time.Time `json:"created_at"`
+	ExpiresAt     time.Time `json:"expires_at,omitempty"`
+	Reason        string    `json:"reason"`
+	SourceService string    `json:"source_service"`
+	HitCount      int64     `json:"hit_count"`
+	LastHitAt     time.Time `json:"last_hit_at,omitempty"`
+}
+
+// BlockedIP represents a blocked IP address
+type BlockedIP struct {
+	IP            string    `json:"ip"`
+	Reason        string    `json:"reason"`
+	SourceService string    `json:"source_service"`
+	BlockedAt     time.Time `json:"blocked_at"`
+	ExpiresAt     time.Time `json:"expires_at,omitempty"`
+	ThreatScore   int       `json:"threat_score"`
+	Categories    []string  `json:"categories"`
+}
+
+// FirewallStatus represents the current firewall state
+type FirewallStatus struct {
+	Enabled             bool              `json:"enabled"`
+	Backend             string            `json:"backend"`
+	Version             string            `json:"version"`
+	TotalRules          int               `json:"total_rules"`
+	ActiveRules         int               `json:"active_rules"`
+	BlockedIPs          int               `json:"blocked_ips"`
+	DefaultDenyInbound  bool              `json:"default_deny_inbound"`
+	DefaultDenyOutbound bool              `json:"default_deny_outbound"`
+	LastUpdated         time.Time         `json:"last_updated"`
+	Capabilities        map[string]string `json:"capabilities"`
+}
+
+// FirewallPlugin is the interface for firewall plugins
+// These provide OS-specific firewall control (iptables, pf, Windows Firewall)
+type FirewallPlugin interface {
+	Info() PluginInfo
+	Configure(config map[string]interface{}) error
+	Health() PluginHealth
+
+	// Firewall control
+	Enable(ctx context.Context, enable bool, defaultDenyInbound bool, defaultDenyOutbound bool) (*FirewallStatus, error)
+	Status(ctx context.Context) (*FirewallStatus, error)
+
+	// IP blocking
+	BlockIP(ctx context.Context, ip string, reason string, sourceService string, durationSeconds int64, threatScore int, categories []string) (*BlockedIP, error)
+	UnblockIP(ctx context.Context, ip string) error
+	ListBlockedIPs(ctx context.Context, limit int, offset int, sourceService string) ([]BlockedIP, int, error)
+	IsIPBlocked(ctx context.Context, ip string) (bool, *BlockedIP, error)
+
+	// Rule management
+	AddRule(ctx context.Context, rule *FirewallRule) (*FirewallRule, error)
+	RemoveRule(ctx context.Context, ruleID string) error
+	UpdateRule(ctx context.Context, rule *FirewallRule) (*FirewallRule, error)
+	ListRules(ctx context.Context, limit int, offset int, direction string, enabledOnly bool) ([]FirewallRule, int, error)
+	GetRule(ctx context.Context, ruleID string) (*FirewallRule, error)
+
+	// Bulk operations
+	SyncBlocklist(ctx context.Context, blockedIPs []BlockedIP, replace bool) (added int, removed int, unchanged int, err error)
+	FlushRules(ctx context.Context, flushBlocks bool, flushRules bool, keepEssential bool) (rulesFlushed int, blocksFlushed int, err error)
+
+	// Port management (convenience)
+	OpenPort(ctx context.Context, port int, protocol string, direction string, sourceIP string, description string) (*FirewallRule, error)
+	ClosePort(ctx context.Context, port int, protocol string, direction string) error
 }
 
 // BaseServicePlugin provides default implementations for ServicePlugin
@@ -381,6 +463,36 @@ func (b *BaseCLIPlugin) SetState(state PluginState, message string) {
 	b.message = message
 }
 
+// BaseFirewallPlugin provides default implementations for FirewallPlugin
+type BaseFirewallPlugin struct {
+	config  map[string]interface{}
+	state   PluginState
+	message string
+}
+
+func (b *BaseFirewallPlugin) Configure(config map[string]interface{}) error {
+	b.config = config
+	b.state = PluginStateReady
+	return nil
+}
+
+func (b *BaseFirewallPlugin) Health() PluginHealth {
+	return PluginHealth{
+		State:     b.state,
+		Message:   b.message,
+		LastCheck: time.Now(),
+	}
+}
+
+func (b *BaseFirewallPlugin) Config() map[string]interface{} {
+	return b.config
+}
+
+func (b *BaseFirewallPlugin) SetState(state PluginState, message string) {
+	b.state = state
+	b.message = message
+}
+
 // Logger returns an hclog.Logger for use in plugins
 func Logger(name string) hclog.Logger {
 	return hclog.New(&hclog.LoggerOptions{
@@ -440,6 +552,17 @@ func ServeCLIPlugin(impl CLIPlugin) {
 		HandshakeConfig: HandshakeConfig,
 		Plugins: map[string]plugin.Plugin{
 			"cli": &cliPluginWrapper{Impl: impl},
+		},
+		GRPCServer: plugin.DefaultGRPCServer,
+	})
+}
+
+// ServeFirewallPlugin starts the gRPC server for a firewall plugin
+func ServeFirewallPlugin(impl FirewallPlugin) {
+	plugin.Serve(&plugin.ServeConfig{
+		HandshakeConfig: HandshakeConfig,
+		Plugins: map[string]plugin.Plugin{
+			"firewall": &firewallPluginWrapper{Impl: impl},
 		},
 		GRPCServer: plugin.DefaultGRPCServer,
 	})
@@ -514,5 +637,19 @@ func (p *cliPluginWrapper) GRPCServer(broker *plugin.GRPCBroker, s *grpc.Server)
 }
 
 func (p *cliPluginWrapper) GRPCClient(ctx context.Context, broker *plugin.GRPCBroker, c *grpc.ClientConn) (interface{}, error) {
+	return nil, nil
+}
+
+type firewallPluginWrapper struct {
+	plugin.Plugin
+	Impl FirewallPlugin
+}
+
+func (p *firewallPluginWrapper) GRPCServer(broker *plugin.GRPCBroker, s *grpc.Server) error {
+	pb.RegisterFirewallPluginServer(s, &firewallGRPCServer{Impl: p.Impl})
+	return nil
+}
+
+func (p *firewallPluginWrapper) GRPCClient(ctx context.Context, broker *plugin.GRPCBroker, c *grpc.ClientConn) (interface{}, error) {
 	return nil, nil
 }

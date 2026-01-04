@@ -119,3 +119,107 @@ func (c *Client) GetEndpointStatus(ctx context.Context, endpointID string) (*End
 func (c *Client) Health(ctx context.Context) error {
 	return c.client.Get(ctx, "/health", nil)
 }
+
+// DetonationReport represents a malware detonation analysis report
+type DetonationReport struct {
+	ID              string      `json:"id"`
+	SampleID        string      `json:"sample_id"`
+	Duration        int64       `json:"duration_ms"`
+	SandboxType     string      `json:"sandbox_type"`
+	ThreatScore     int         `json:"threat_score"`
+	Verdict         string      `json:"verdict"`
+	GeneratedAt     time.Time   `json:"generated_at"`
+	StaticAnalysis  interface{} `json:"static_analysis,omitempty"`
+	DynamicAnalysis interface{} `json:"dynamic_analysis,omitempty"`
+	NetworkActivity interface{} `json:"network_activity,omitempty"`
+	FileActivity    interface{} `json:"file_activity,omitempty"`
+	IOCs            []IOC       `json:"iocs,omitempty"`
+}
+
+// IOC represents an Indicator of Compromise
+type IOC struct {
+	Type       string `json:"type"`
+	Value      string `json:"value"`
+	Context    string `json:"context,omitempty"`
+	Confidence int    `json:"confidence"`
+}
+
+// SampleReputation represents the reputation data for a file
+type SampleReputation struct {
+	SHA256           string   `json:"sha256"`
+	FirstSeen        string   `json:"first_seen"`
+	LastSeen         string   `json:"last_seen"`
+	TotalSightings   int      `json:"total_sightings"`
+	ThreatScore      int      `json:"threat_score"`
+	Verdict          string   `json:"verdict"`
+	MalwareFamily    string   `json:"malware_family,omitempty"`
+	Tags             []string `json:"tags,omitempty"`
+	Confidence       float64  `json:"confidence"`
+	GlobalPrevalence float64  `json:"global_prevalence"`
+}
+
+// SubmitDetonationReports uploads detonation analysis reports to the portal
+func (c *Client) SubmitDetonationReports(ctx context.Context, reports []DetonationReport) error {
+	payload := struct {
+		Reports []DetonationReport `json:"reports"`
+	}{
+		Reports: reports,
+	}
+	return c.client.Post(ctx, "/v1/detonation/reports", payload, nil)
+}
+
+// SubmitDetonationReportsRaw uploads raw JSON detonation reports
+func (c *Client) SubmitDetonationReportsRaw(ctx context.Context, data []byte) error {
+	return c.client.Post(ctx, "/v1/detonation/reports", data, nil)
+}
+
+// GetSampleReputation queries the reputation of a file hash
+func (c *Client) GetSampleReputation(ctx context.Context, sha256 string) (*SampleReputation, error) {
+	var result SampleReputation
+	if err := c.client.Get(ctx, "/v1/reputation/"+sha256, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// SubmitIOCs uploads Indicators of Compromise to the portal
+func (c *Client) SubmitIOCs(ctx context.Context, iocs []IOC) error {
+	payload := struct {
+		IOCs []IOC `json:"iocs"`
+	}{
+		IOCs: iocs,
+	}
+	return c.client.Post(ctx, "/v1/iocs/submit", payload, nil)
+}
+
+// ThreatIntelResponse contains threat intelligence data
+type ThreatIntelResponse struct {
+	UpdatedAt        string      `json:"updated_at"`
+	MaliciousIPs     []string    `json:"malicious_ips"`
+	MaliciousDomains []string    `json:"malicious_domains"`
+	MaliciousHashes  []string    `json:"malicious_hashes"`
+	BlockRules       []BlockRule `json:"block_rules"`
+}
+
+// BlockRule represents a firewall/block rule
+type BlockRule struct {
+	ID          string `json:"id"`
+	Type        string `json:"type"`
+	Value       string `json:"value"`
+	Action      string `json:"action"`
+	Description string `json:"description"`
+	ExpiresAt   string `json:"expires_at,omitempty"`
+}
+
+// GetThreatIntel fetches the latest threat intelligence
+func (c *Client) GetThreatIntel(ctx context.Context, since string) (*ThreatIntelResponse, error) {
+	var result ThreatIntelResponse
+	path := "/v1/threat-intel"
+	if since != "" {
+		path += "?since=" + since
+	}
+	if err := c.client.Get(ctx, path, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}

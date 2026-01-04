@@ -1,0 +1,289 @@
+syntax = "proto3";
+
+package plugin;
+
+option go_package = "github.com/afterdarksys/afterdark-darkd/api/proto/plugin";
+
+// Firewall Plugin Protocol Buffer Definitions
+// Provides cross-platform firewall management via plugins
+
+import "api/proto/plugin/plugin.proto";
+
+// FirewallRule represents a single firewall rule
+message FirewallRule {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+
+  // Direction: "inbound", "outbound", or "both"
+  string direction = 4;
+
+  // Action: "allow", "deny", "drop", "reject"
+  string action = 5;
+
+  // Protocol: "tcp", "udp", "icmp", "any"
+  string protocol = 6;
+
+  // Source criteria
+  string source_ip = 7;        // CIDR notation: "192.168.1.0/24" or "any"
+  string source_port = 8;      // Port or range: "80", "80-443", or "any"
+
+  // Destination criteria
+  string dest_ip = 9;
+  string dest_port = 10;
+
+  // Interface (optional)
+  string interface = 11;
+
+  // Priority/order (lower = higher priority)
+  int32 priority = 12;
+
+  // Enabled state
+  bool enabled = 13;
+
+  // Metadata
+  int64 created_at = 14;
+  int64 expires_at = 15;       // 0 = permanent
+  string reason = 16;          // Why this rule was created
+  string source_service = 17;  // Which service created this rule
+
+  // Statistics (read-only)
+  int64 hit_count = 18;
+  int64 last_hit_at = 19;
+}
+
+// BlockedIP represents a blocked IP address
+message BlockedIP {
+  string ip = 1;
+  string reason = 2;
+  string source_service = 3;  // e.g., "threat-intel", "conntrack", "manual"
+  int64 blocked_at = 4;
+  int64 expires_at = 5;       // 0 = permanent
+  int32 threat_score = 6;
+  repeated string categories = 7; // e.g., "malware", "botnet", "scanner"
+}
+
+// FirewallStatus represents the current firewall state
+message FirewallStatus {
+  bool enabled = 1;
+  string backend = 2;           // "iptables", "nftables", "pf", "windows-firewall"
+  string version = 3;           // Backend version
+  int32 total_rules = 4;
+  int32 active_rules = 5;
+  int32 blocked_ips = 6;
+  bool default_deny_inbound = 7;
+  bool default_deny_outbound = 8;
+  int64 last_updated = 9;
+  map<string, string> capabilities = 10;
+}
+
+// Firewall Plugin Requests/Responses
+
+message FirewallEnableRequest {
+  bool enable = 1;
+  bool default_deny_inbound = 2;
+  bool default_deny_outbound = 3;
+}
+
+message FirewallEnableResponse {
+  bool success = 1;
+  string error = 2;
+  FirewallStatus status = 3;
+}
+
+message FirewallStatusRequest {}
+
+message FirewallStatusResponse {
+  bool success = 1;
+  string error = 2;
+  FirewallStatus status = 3;
+}
+
+// Block/Unblock IP
+message BlockIPRequest {
+  string ip = 1;
+  string reason = 2;
+  string source_service = 3;
+  int64 duration_seconds = 4;  // 0 = permanent
+  int32 threat_score = 5;
+  repeated string categories = 6;
+}
+
+message BlockIPResponse {
+  bool success = 1;
+  string error = 2;
+  BlockedIP blocked_ip = 3;
+}
+
+message UnblockIPRequest {
+  string ip = 1;
+}
+
+message UnblockIPResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+message ListBlockedIPsRequest {
+  int32 limit = 1;
+  int32 offset = 2;
+  string source_service = 3;   // Filter by source
+}
+
+message ListBlockedIPsResponse {
+  bool success = 1;
+  string error = 2;
+  repeated BlockedIP blocked_ips = 3;
+  int32 total_count = 4;
+}
+
+message IsIPBlockedRequest {
+  string ip = 1;
+}
+
+message IsIPBlockedResponse {
+  bool success = 1;
+  string error = 2;
+  bool blocked = 3;
+  BlockedIP blocked_ip = 4;
+}
+
+// Rule Management
+message AddRuleRequest {
+  FirewallRule rule = 1;
+}
+
+message AddRuleResponse {
+  bool success = 1;
+  string error = 2;
+  FirewallRule rule = 3;
+}
+
+message RemoveRuleRequest {
+  string rule_id = 1;
+}
+
+message RemoveRuleResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+message UpdateRuleRequest {
+  FirewallRule rule = 1;
+}
+
+message UpdateRuleResponse {
+  bool success = 1;
+  string error = 2;
+  FirewallRule rule = 3;
+}
+
+message ListRulesRequest {
+  int32 limit = 1;
+  int32 offset = 2;
+  string direction = 3;  // Filter by direction
+  bool enabled_only = 4;
+}
+
+message ListRulesResponse {
+  bool success = 1;
+  string error = 2;
+  repeated FirewallRule rules = 3;
+  int32 total_count = 4;
+}
+
+message GetRuleRequest {
+  string rule_id = 1;
+}
+
+message GetRuleResponse {
+  bool success = 1;
+  string error = 2;
+  FirewallRule rule = 3;
+}
+
+// Bulk Operations
+message SyncBlocklistRequest {
+  repeated BlockedIP blocked_ips = 1;
+  bool replace = 2;  // true = replace all, false = merge
+}
+
+message SyncBlocklistResponse {
+  bool success = 1;
+  string error = 2;
+  int32 added = 3;
+  int32 removed = 4;
+  int32 unchanged = 5;
+}
+
+message FlushRulesRequest {
+  bool flush_blocks = 1;    // Flush IP blocks
+  bool flush_rules = 2;     // Flush custom rules
+  bool keep_essential = 3;  // Keep essential system rules
+}
+
+message FlushRulesResponse {
+  bool success = 1;
+  string error = 2;
+  int32 rules_flushed = 3;
+  int32 blocks_flushed = 4;
+}
+
+// Port Management (convenience methods)
+message OpenPortRequest {
+  int32 port = 1;
+  string protocol = 2;        // "tcp", "udp", or "both"
+  string direction = 3;       // "inbound", "outbound", or "both"
+  string source_ip = 4;       // Restrict to source (optional)
+  string description = 5;
+}
+
+message OpenPortResponse {
+  bool success = 1;
+  string error = 2;
+  FirewallRule rule = 3;
+}
+
+message ClosePortRequest {
+  int32 port = 1;
+  string protocol = 2;
+  string direction = 3;
+}
+
+message ClosePortResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+// Firewall Plugin Service
+service FirewallPlugin {
+  // Plugin lifecycle
+  rpc Info(Empty) returns (PluginInfo);
+  rpc Configure(ConfigureRequest) returns (ConfigureResponse);
+  rpc Health(HealthRequest) returns (HealthResponse);
+
+  // Firewall control
+  rpc Enable(FirewallEnableRequest) returns (FirewallEnableResponse);
+  rpc Status(FirewallStatusRequest) returns (FirewallStatusResponse);
+
+  // IP blocking
+  rpc BlockIP(BlockIPRequest) returns (BlockIPResponse);
+  rpc UnblockIP(UnblockIPRequest) returns (UnblockIPResponse);
+  rpc ListBlockedIPs(ListBlockedIPsRequest) returns (ListBlockedIPsResponse);
+  rpc IsIPBlocked(IsIPBlockedRequest) returns (IsIPBlockedResponse);
+
+  // Rule management
+  rpc AddRule(AddRuleRequest) returns (AddRuleResponse);
+  rpc RemoveRule(RemoveRuleRequest) returns (RemoveRuleResponse);
+  rpc UpdateRule(UpdateRuleRequest) returns (UpdateRuleResponse);
+  rpc ListRules(ListRulesRequest) returns (ListRulesResponse);
+  rpc GetRule(GetRuleRequest) returns (GetRuleResponse);
+
+  // Bulk operations
+  rpc SyncBlocklist(SyncBlocklistRequest) returns (SyncBlocklistResponse);
+  rpc FlushRules(FlushRulesRequest) returns (FlushRulesResponse);
+
+  // Port management
+  rpc OpenPort(OpenPortRequest) returns (OpenPortResponse);
+  rpc ClosePort(ClosePortRequest) returns (ClosePortResponse);
+}

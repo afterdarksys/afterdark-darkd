@@ -44,10 +44,11 @@ type RetryConfig struct {
 
 // ServicesConfig holds configuration for all services
 type ServicesConfig struct {
-	PatchMonitor    PatchMonitorConfig    `yaml:"patch_monitor" json:"patch_monitor"`
-	ThreatIntel     ThreatIntelConfig     `yaml:"threat_intel" json:"threat_intel"`
-	BaselineScanner BaselineScannerConfig `yaml:"baseline_scanner" json:"baseline_scanner"`
-	NetworkMonitor  NetworkMonitorConfig  `yaml:"network_monitor" json:"network_monitor"`
+	PatchMonitor      PatchMonitorConfig    `yaml:"patch_monitor" json:"patch_monitor"`
+	ThreatIntel       ThreatIntelConfig     `yaml:"threat_intel" json:"threat_intel"`
+	BaselineScanner   BaselineScannerConfig `yaml:"baseline_scanner" json:"baseline_scanner"`
+	NetworkMonitor    NetworkMonitorConfig  `yaml:"network_monitor" json:"network_monitor"`
+	DetonationChamber DetonationConfig      `yaml:"detonation_chamber" json:"detonation_chamber"`
 }
 
 // PatchMonitorConfig holds patch monitoring configuration
@@ -175,6 +176,41 @@ func DefaultConfig() *Config {
 				},
 				AllowICMP:          false,
 				BlockFragmentation: true,
+			},
+			DetonationChamber: DetonationConfig{
+				Enabled:           false, // Disabled by default - requires explicit opt-in
+				WatchDirs:         []string{"/var/lib/afterdark/quarantine"},
+				QuarantineDir:     "/var/lib/afterdark/quarantine",
+				SandboxType:       "docker",
+				DockerImage:       "afterdark/detonation-chamber:latest",
+				MaxConcurrent:     2,
+				DetonationTimeout: 5 * time.Minute,
+				MaxFileSize:       100 * 1024 * 1024, // 100MB
+				SupportedTypes: []string{
+					// Executables
+					".exe", ".dll", ".msi", ".bat", ".cmd", ".ps1", ".vbs", ".js",
+					".jar", ".py", ".sh", ".elf", ".dmg", ".app", ".pkg", ".scr", ".com",
+					// Documents (macro-enabled)
+					".doc", ".docx", ".docm", ".xls", ".xlsx", ".xlsm", ".ppt", ".pptx", ".pptm",
+					".pdf", ".rtf", ".odt", ".ods",
+					// Archives
+					".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".cab", ".iso", ".img",
+					// Scripts
+					".hta", ".wsf", ".wsh", ".lnk", ".url",
+				},
+				AutoSubmit:    true,
+				RetainSamples: 30 * 24 * time.Hour, // 30 days
+				EnableYara:    true,
+				YaraRulesDir:  "/var/lib/afterdark/yara",
+				PortalUpload: PortalUploadConfig{
+					Enabled:        true,
+					UploadSamples:  false, // Don't upload actual malware by default
+					UploadReports:  true,
+					UploadIOCs:     true,
+					MinThreatScore: 50,
+					BatchSize:      100,
+					BatchInterval:  5 * time.Minute,
+				},
 			},
 		},
 		Storage: StorageConfig{
