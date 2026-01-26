@@ -11,11 +11,19 @@ import (
 )
 
 // Platform implements the platform.Platform interface for Windows
-type Platform struct{}
+type Platform struct {
+	osInfo *platform.OSInfo
+}
 
 // New creates a new Windows platform implementation
 func New() (*Platform, error) {
-	return &Platform{}, nil
+	p := &Platform{}
+	// Pre-cache OS info
+	info, err := p.GetOSInfo()
+	if err == nil {
+		p.osInfo = info
+	}
+	return p, nil
 }
 
 // GetOSInfo returns Windows system information
@@ -35,29 +43,7 @@ func (p *Platform) GetHostname() (string, error) {
 	return os.Hostname()
 }
 
-// ListInstalledPatches returns installed Windows updates
-func (p *Platform) ListInstalledPatches(ctx context.Context) ([]platform.Patch, error) {
-	// Use Windows Update API or WMI
-	return []platform.Patch{}, nil
-}
-
-// ListAvailablePatches returns available Windows updates
-func (p *Platform) ListAvailablePatches(ctx context.Context) ([]platform.Patch, error) {
-	// Use Windows Update API
-	return []platform.Patch{}, nil
-}
-
-// InstallPatch installs a specific Windows update
-func (p *Platform) InstallPatch(ctx context.Context, patchID string) error {
-	// Use Windows Update API
-	return nil
-}
-
-// ListInstalledApplications returns installed applications
-func (p *Platform) ListInstalledApplications(ctx context.Context) ([]platform.Application, error) {
-	// Query registry for installed programs
-	return []platform.Application{}, nil
-}
+// Methods moved to patches.go
 
 // GetNetworkInterfaces returns network interfaces
 func (p *Platform) GetNetworkInterfaces() ([]platform.NetworkInterface, error) {

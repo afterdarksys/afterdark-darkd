@@ -1,0 +1,581 @@
+syntax = "proto3";
+
+package ipc;
+
+option go_package = "github.com/afterdarksys/afterdark-darkd/api/proto/ipc";
+
+// Empty message for requests with no parameters
+message Empty {}
+
+// ============================================================================
+// Common Types
+// ============================================================================
+
+message Timestamp {
+  int64 seconds = 1;
+  int32 nanos = 2;
+}
+
+// ============================================================================
+// Status & Health
+// ============================================================================
+
+message StatusRequest {}
+
+message StatusResponse {
+  string version = 1;
+  string platform = 2;
+  string hostname = 3;
+  int64 uptime_seconds = 4;
+  int64 pid = 5;
+  string state = 6;  // running, starting, stopping, degraded
+  Timestamp started_at = 7;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  string status = 1;  // healthy, degraded, unhealthy
+  string message = 2;
+  map<string, ServiceHealth> services = 3;
+  ResourceMetrics resources = 4;
+}
+
+message ServiceHealth {
+  string name = 1;
+  string status = 2;  // healthy, degraded, unhealthy, stopped
+  string message = 3;
+  Timestamp last_check = 4;
+  map<string, string> metrics = 5;
+}
+
+message ResourceMetrics {
+  double cpu_percent = 1;
+  int64 memory_bytes = 2;
+  int64 memory_limit_bytes = 3;
+  int32 goroutines = 4;
+  int32 open_files = 5;
+}
+
+// ============================================================================
+// Patch Management
+// ============================================================================
+
+message GetComplianceRequest {}
+
+message ComplianceResponse {
+  bool compliant = 1;
+  Timestamp last_scan = 2;
+  Timestamp next_scan = 3;
+  int32 critical_missing = 4;
+  int32 important_missing = 5;
+  int32 total_missing = 6;
+  repeated UrgentAction urgent_actions = 7;
+}
+
+message UrgentAction {
+  Patch patch = 1;
+  Timestamp due_by = 2;
+  int32 urgency_days = 3;
+  string reason = 4;
+}
+
+message ListPatchesRequest {
+  PatchFilter filter = 1;
+}
+
+message PatchFilter {
+  bool missing_only = 1;
+  bool installed_only = 2;
+  repeated string severities = 3;  // critical, important, moderate, low
+  repeated string categories = 4;  // kernel, network, software, security
+}
+
+message PatchListResponse {
+  repeated Patch patches = 1;
+  int32 total_count = 2;
+}
+
+message Patch {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string severity = 4;
+  string category = 5;
+  Timestamp installed_at = 6;
+  Timestamp released_at = 7;
+  repeated string cves = 8;
+  string kb_article = 9;
+  int64 size_bytes = 10;
+  bool is_installed = 11;
+}
+
+message TriggerScanRequest {
+  string scan_type = 1;  // patches, baseline, full
+}
+
+message ScanResponse {
+  bool started = 1;
+  string scan_id = 2;
+  string message = 3;
+}
+
+// ============================================================================
+// Threat Intelligence
+// ============================================================================
+
+message GetThreatStatusRequest {}
+
+message ThreatStatusResponse {
+  bool enabled = 1;
+  Timestamp last_sync = 2;
+  Timestamp next_sync = 3;
+  int64 bad_domains_count = 4;
+  int64 bad_ips_count = 5;
+  double cache_hit_rate = 6;
+  int64 lookups_total = 7;
+  int64 threats_detected = 8;
+}
+
+message CheckDomainRequest {
+  string domain = 1;
+}
+
+message CheckIPRequest {
+  string ip = 1;
+}
+
+message ThreatCheckResponse {
+  bool is_threat = 1;
+  string indicator = 2;
+  string threat_type = 3;  // malware, phishing, c2, spam, etc.
+  string category = 4;
+  int32 confidence = 5;    // 0-100
+  string source = 6;
+  Timestamp first_seen = 7;
+  Timestamp last_seen = 8;
+  map<string, string> metadata = 9;
+}
+
+message CheckBulkRequest {
+  repeated string domains = 1;
+  repeated string ips = 2;
+}
+
+message CheckBulkResponse {
+  repeated ThreatCheckResponse results = 1;
+}
+
+// ============================================================================
+// Service Management
+// ============================================================================
+
+message ListServicesRequest {}
+
+message ServiceInfo {
+  string name = 1;
+  string status = 2;  // running, stopped, starting, stopping, failed
+  bool enabled = 3;
+  Timestamp started_at = 4;
+  string health = 5;
+  map<string, string> metrics = 6;
+}
+
+message ServiceListResponse {
+  repeated ServiceInfo services = 1;
+}
+
+message ServiceRequest {
+  string name = 1;
+}
+
+message ServiceResponse {
+  bool success = 1;
+  string message = 2;
+  ServiceInfo service = 3;
+}
+
+// ============================================================================
+// Configuration
+// ============================================================================
+
+message GetConfigRequest {
+  string section = 1;  // empty for full config, or "patch_monitor", "threat_intel", etc.
+}
+
+message ConfigResponse {
+  bytes config_json = 1;
+  string config_yaml = 2;
+}
+
+message ReloadConfigRequest {}
+
+message ReloadResponse {
+  bool success = 1;
+  string message = 2;
+  repeated string warnings = 3;
+}
+
+// ============================================================================
+// Network Monitoring
+// ============================================================================
+
+message GetConnectionsRequest {
+  int32 limit = 1;
+  bool flagged_only = 2;
+}
+
+message Connection {
+  string protocol = 1;
+  string local_addr = 2;
+  int32 local_port = 3;
+  string remote_addr = 4;
+  int32 remote_port = 5;
+  string state = 6;
+  int32 pid = 7;
+  string process_name = 8;
+  bool is_flagged = 9;
+  string threat_category = 10;
+  int32 threat_score = 11;
+}
+
+message ConnectionsResponse {
+  repeated Connection connections = 1;
+  int32 total_count = 2;
+  int32 flagged_count = 3;
+}
+
+// ============================================================================
+// File Integrity
+// ============================================================================
+
+message GetFileStatusRequest {
+  string path = 1;
+}
+
+message FileStatus {
+  string path = 1;
+  string sha256 = 2;
+  string sha1 = 3;
+  string md5 = 4;
+  int64 size_bytes = 5;
+  Timestamp modified_at = 6;
+  Timestamp first_seen = 7;
+  Timestamp last_seen = 8;
+  string reputation = 9;  // unknown, clean, suspicious, malicious
+  int32 reputation_score = 10;
+}
+
+message FileStatusResponse {
+  bool found = 1;
+  FileStatus file = 2;
+}
+
+message ListQuarantinedRequest {
+  int32 limit = 1;
+}
+
+message QuarantinedFile {
+  string original_path = 1;
+  string quarantine_path = 2;
+  string sha256 = 3;
+  string reason = 4;
+  Timestamp quarantined_at = 5;
+  string quarantined_by = 6;  // user, auto, plugin
+}
+
+message QuarantinedResponse {
+  repeated QuarantinedFile files = 1;
+  int32 total_count = 2;
+}
+
+// ============================================================================
+// Process Monitoring
+// ============================================================================
+
+message ListProcessesRequest {
+  bool suspicious_only = 1;
+  int32 limit = 2;
+}
+
+message Process {
+  int32 pid = 1;
+  int32 ppid = 2;
+  string name = 3;
+  string executable = 4;
+  string cmdline = 5;
+  string user = 6;
+  double cpu_percent = 7;
+  int64 memory_bytes = 8;
+  int32 connections = 9;
+  string status = 10;
+  Timestamp started_at = 11;
+  bool is_suspicious = 12;
+  string suspicion_reason = 13;
+  int32 anomaly_score = 14;
+}
+
+message ProcessListResponse {
+  repeated Process processes = 1;
+  int32 total_count = 2;
+  int32 suspicious_count = 3;
+}
+
+// ============================================================================
+// Logs & Events
+// ============================================================================
+
+message GetEventsRequest {
+  int32 limit = 1;
+  string severity = 2;  // info, warning, error, critical
+  string event_type = 3;
+  Timestamp since = 4;
+}
+
+message Event {
+  string id = 1;
+  string type = 2;
+  string severity = 3;
+  string message = 4;
+  Timestamp timestamp = 5;
+  string source = 6;
+  map<string, string> metadata = 7;
+}
+
+message EventsResponse {
+  repeated Event events = 1;
+  int32 total_count = 2;
+  bool has_more = 3;
+}
+
+// ============================================================================
+// C2/Beacon Detection
+// ============================================================================
+
+message GetBeaconAnalysisRequest {
+  int32 limit = 1;
+  float min_score = 2;  // Minimum beacon score (0-100)
+}
+
+message BeaconAnalysis {
+  string connection_key = 1;
+  string remote_addr = 2;
+  int32 remote_port = 3;
+  string process_name = 4;
+  int32 pid = 5;
+
+  // Timing metrics
+  int64 mean_interval_ms = 6;
+  double std_deviation_ms = 7;
+  double coeff_variation = 8;
+  double jitter_percent = 9;
+
+  // Connection stats
+  int32 connection_count = 10;
+  int64 avg_bytes_out = 11;
+  int64 avg_bytes_in = 12;
+
+  // Detection results
+  double beacon_score = 13;
+  bool is_beacon_likely = 14;
+  string detected_pattern = 15;  // "fixed", "jitter", "exponential"
+  string matched_framework = 16;  // "cobalt_strike", "metasploit", etc.
+
+  Timestamp first_seen = 17;
+  Timestamp last_analyzed = 18;
+}
+
+message BeaconAnalysisResponse {
+  repeated BeaconAnalysis beacons = 1;
+  int32 total_analyzed = 2;
+  int32 likely_beacons = 3;
+}
+
+// ============================================================================
+// DNS Tunneling Detection
+// ============================================================================
+
+message GetDNSTunnelAnalysisRequest {
+  int32 limit = 1;
+  float min_score = 2;  // Minimum tunnel score (0-100)
+}
+
+message DNSTunnelAnalysis {
+  string domain = 1;
+  int32 query_count = 2;
+  int32 unique_subdomains = 3;
+
+  // Entropy metrics
+  double avg_subdomain_length = 4;
+  int32 max_subdomain_length = 5;
+  double avg_entropy = 6;
+  double max_entropy = 7;
+
+  // Detection results
+  string encoding_detected = 8;  // "base64", "base32", "hex"
+  double txt_query_ratio = 9;
+  double nxdomain_ratio = 10;
+  double tunneling_score = 11;
+  bool is_tunnel_likely = 12;
+  string tunnel_type = 13;  // "iodine", "dnscat2", etc.
+
+  Timestamp first_seen = 14;
+  Timestamp last_query = 15;
+  string process_name = 16;
+  int32 process_pid = 17;
+}
+
+message DNSTunnelAnalysisResponse {
+  repeated DNSTunnelAnalysis tunnels = 1;
+  int32 total_domains_analyzed = 2;
+  int32 likely_tunnels = 3;
+}
+
+// ============================================================================
+// Memory Scanning
+// ============================================================================
+
+message ScanProcessMemoryRequest {
+  int32 pid = 1;
+  bool full_scan = 2;  // If false, quick scan of suspicious regions only
+}
+
+message GetMemoryScanResultsRequest {
+  int32 limit = 1;
+  bool suspicious_only = 2;
+}
+
+message MemoryRegion {
+  uint64 base_address = 1;
+  uint64 size = 2;
+  string protection = 3;  // "RWX", "RW", "RX", "R"
+  string type = 4;  // "Image", "Mapped", "Private"
+  string state = 5;  // "Commit", "Reserve", "Free"
+  double entropy = 6;
+  bool contains_pe = 7;
+  bool contains_elf = 8;
+  string mapped_file = 9;
+  bool is_executable = 10;
+  bool is_writable = 11;
+  bool is_unbacked = 12;
+}
+
+message MemoryDetection {
+  string type = 1;  // "shellcode", "injection", "hollow", "pe_header"
+  string description = 2;
+  uint64 address = 3;
+  uint64 size = 4;
+  double confidence = 5;
+  string technique_id = 6;  // MITRE ATT&CK ID
+  repeated string indicators = 7;
+}
+
+message YARAMatch {
+  string rule = 1;
+  string namespace = 2;
+  repeated string matched_strings = 3;
+  map<string, string> meta = 4;
+  uint64 address = 5;
+}
+
+message MemoryScanResult {
+  int32 pid = 1;
+  string process_name = 2;
+  string process_path = 3;
+  Timestamp scan_time = 4;
+  int64 scan_duration_ms = 5;
+
+  repeated MemoryDetection detections = 6;
+  repeated MemoryRegion suspicious_regions = 7;
+  repeated YARAMatch yara_matches = 8;
+
+  double threat_score = 9;
+  string threat_level = 10;  // "clean", "suspicious", "malicious"
+  bool injection_detected = 11;
+  bool shellcode_found = 12;
+  bool hollowing_detected = 13;
+}
+
+message MemoryScanResponse {
+  bool scan_started = 1;
+  string scan_id = 2;
+  MemoryScanResult result = 3;  // Populated if scan completed immediately
+}
+
+message MemoryScanResultsResponse {
+  repeated MemoryScanResult results = 1;
+  int32 total_scanned = 2;
+  int32 suspicious_count = 3;
+}
+
+// ============================================================================
+// Daemon Control
+// ============================================================================
+
+message ShutdownRequest {
+  bool force = 1;
+  int32 timeout_seconds = 2;
+}
+
+message ShutdownResponse {
+  bool accepted = 1;
+  string message = 2;
+}
+
+// ============================================================================
+// Daemon Service
+// ============================================================================
+
+service DaemonService {
+  // Status & Health
+  rpc GetStatus(StatusRequest) returns (StatusResponse);
+  rpc GetHealth(HealthRequest) returns (HealthResponse);
+
+  // Patch Management
+  rpc GetCompliance(GetComplianceRequest) returns (ComplianceResponse);
+  rpc ListPatches(ListPatchesRequest) returns (PatchListResponse);
+  rpc TriggerScan(TriggerScanRequest) returns (ScanResponse);
+
+  // Threat Intelligence
+  rpc GetThreatStatus(GetThreatStatusRequest) returns (ThreatStatusResponse);
+  rpc CheckDomain(CheckDomainRequest) returns (ThreatCheckResponse);
+  rpc CheckIP(CheckIPRequest) returns (ThreatCheckResponse);
+  rpc CheckBulk(CheckBulkRequest) returns (CheckBulkResponse);
+
+  // Service Management
+  rpc ListServices(ListServicesRequest) returns (ServiceListResponse);
+  rpc StartService(ServiceRequest) returns (ServiceResponse);
+  rpc StopService(ServiceRequest) returns (ServiceResponse);
+  rpc RestartService(ServiceRequest) returns (ServiceResponse);
+
+  // Configuration
+  rpc GetConfig(GetConfigRequest) returns (ConfigResponse);
+  rpc ReloadConfig(ReloadConfigRequest) returns (ReloadResponse);
+
+  // Network Monitoring
+  rpc GetConnections(GetConnectionsRequest) returns (ConnectionsResponse);
+
+  // File Integrity
+  rpc GetFileStatus(GetFileStatusRequest) returns (FileStatusResponse);
+  rpc ListQuarantined(ListQuarantinedRequest) returns (QuarantinedResponse);
+
+  // Process Monitoring
+  rpc ListProcesses(ListProcessesRequest) returns (ProcessListResponse);
+
+  // Events & Logs
+  rpc GetEvents(GetEventsRequest) returns (EventsResponse);
+  rpc StreamEvents(GetEventsRequest) returns (stream Event);
+
+  // C2/Beacon Detection
+  rpc GetBeaconAnalysis(GetBeaconAnalysisRequest) returns (BeaconAnalysisResponse);
+
+  // DNS Tunneling Detection
+  rpc GetDNSTunnelAnalysis(GetDNSTunnelAnalysisRequest) returns (DNSTunnelAnalysisResponse);
+
+  // Memory Scanning
+  rpc ScanProcessMemory(ScanProcessMemoryRequest) returns (MemoryScanResponse);
+  rpc GetMemoryScanResults(GetMemoryScanResultsRequest) returns (MemoryScanResultsResponse);
+
+  // Daemon Control
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+}

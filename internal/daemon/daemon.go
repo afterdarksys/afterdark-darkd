@@ -124,6 +124,13 @@ func (d *Daemon) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to write PID file: %w", err)
 	}
 
+	// Initialize core services
+	if err := d.InitializeServices(); err != nil {
+		d.logger.Error("failed to initialize services", zap.Error(err))
+		d.removePIDFile()
+		return fmt.Errorf("failed to initialize services: %w", err)
+	}
+
 	// Load plugins
 	if err := d.loadPlugins(ctx); err != nil {
 		d.logger.Warn("failed to load plugins", zap.Error(err))

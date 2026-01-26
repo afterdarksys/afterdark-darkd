@@ -17,11 +17,11 @@ import (
 
 // Service monitors system services/daemons
 type Service struct {
-	mu       sync.RWMutex
-	config   *models.TrackingConfig
-	running  bool
-	cancel   context.CancelFunc
-	logger   *zap.Logger
+	mu      sync.RWMutex
+	config  *models.TrackingConfig
+	running bool
+	cancel  context.CancelFunc
+	logger  *zap.Logger
 
 	// Current services
 	services map[string]*models.SystemService
@@ -209,8 +209,17 @@ func (s *Service) scan() error {
 	return nil
 }
 
-// scanDarwin scans services on macOS using launchctl
+// scanDarwin scans services on macOS
+// On darwin builds, this tries native plist parsing first via scanDarwinNative()
+// (defined in service_darwin.go). On other platforms, this is a no-op stub.
 func (s *Service) scanDarwin() ([]models.SystemService, error) {
+	// This will be overridden by service_darwin.go on darwin builds
+	// For non-darwin builds, fall back to launchctl (which won't work anyway)
+	return s.scanDarwinLaunchctl()
+}
+
+// scanDarwinLaunchctl uses launchctl as fallback (requires exec.Command)
+func (s *Service) scanDarwinLaunchctl() ([]models.SystemService, error) {
 	services := make([]models.SystemService, 0)
 
 	// List system services

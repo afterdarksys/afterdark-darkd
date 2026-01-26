@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package plugin;
+package darkd.plugin;
 
 option go_package = "github.com/afterdarksys/afterdark-darkd/api/proto/plugin";
 

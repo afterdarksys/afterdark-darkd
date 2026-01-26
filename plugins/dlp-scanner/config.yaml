@@ -1,0 +1,65 @@
+# DLP Scanner Plugin Configuration
+# Data Loss Prevention scanner for detecting and blocking sensitive data
+
+plugin:
+  name: dlp-scanner
+  binary: dlp-scanner
+  enabled: true
+  autostart: true
+
+# Plugin-specific configuration
+config:
+  # Enable/disable the plugin
+  enabled: true
+
+  # Data directory for catalogs and quarantine
+  data_dir: /var/lib/afterdark/dlp
+
+  # Catalog database path
+  catalog_db_path: /var/lib/afterdark/dlp/catalog.db
+  catalog_enabled: true
+
+  # Quarantine settings
+  quarantine_enabled: true
+  quarantine_path: /var/lib/afterdark/dlp/quarantine
+  quarantine_db_path: /var/lib/afterdark/dlp/quarantine.db
+  retention_days: 90
+
+  # File watching settings
+  scan_on_access: false
+  scan_on_write: true
+  watch_paths:
+    - /home
+    - /Users
+    - /tmp
+
+  # Scanning limits
+  max_file_size: 104857600  # 100MB
+  max_matches_per_file: 100
+  workers: 4
+  include_hidden: false
+
+  # Exclusions
+  exclude_paths:
+    - /home/*/.cache
+    - /Users/*/.cache
+    - /tmp/.X11-unix
+    - /var/cache
+  exclude_patterns:
+    - "*.log"
+    - "*.tmp"
+    - ".git/*"
+    - "node_modules/*"
+
+  # Enable default policy (blocks credentials, critical PII)
+  default_policy: true
+
+  # Custom policy directory
+  policy_path: /etc/afterdark/dlp/policies
+
+  # Enabled detection patterns (leave empty to enable all)
+  enabled_patterns: []
+
+  # Disabled detection patterns
+  disabled_patterns:
+    - "dob"  # Date of birth - too many false positives

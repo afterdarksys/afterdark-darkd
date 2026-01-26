@@ -63,6 +63,12 @@ services:
     allow_icmp: false
     block_fragmentation: true
 
+plugins:
+  dlp-scanner:
+    enabled: true
+    autostart: true
+    config_file: plugins/dlp-scanner/config.yaml
+
 storage:
   backend: json
   path: /var/lib/afterdark/data

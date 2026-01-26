@@ -19,9 +19,9 @@ type Process struct {
 
 // ProcessSnapshot represents a point-in-time snapshot of all processes
 type ProcessSnapshot struct {
-	Timestamp time.Time  `json:"timestamp"`
-	Hostname  string     `json:"hostname"`
-	Processes []Process  `json:"processes"`
+	Timestamp time.Time   `json:"timestamp"`
+	Hostname  string      `json:"hostname"`
+	Processes []Process   `json:"processes"`
 	Summary   ProcSummary `json:"summary"`
 }
 
@@ -40,8 +40,9 @@ type SystemService struct {
 	Name        string    `json:"name"`
 	DisplayName string    `json:"display_name,omitempty"`
 	Description string    `json:"description,omitempty"`
-	Status      string    `json:"status"` // running, stopped, starting, stopping
+	Status      string    `json:"status"`     // running, stopped, starting, stopping
 	StartType   string    `json:"start_type"` // auto, manual, disabled
+	Enabled     bool      `json:"enabled"`
 	PID         int32     `json:"pid,omitempty"`
 	Executable  string    `json:"executable,omitempty"`
 	User        string    `json:"user,omitempty"`
@@ -50,12 +51,12 @@ type SystemService struct {
 
 // NetworkConnection represents an active network connection
 type NetworkConnection struct {
-	Protocol    string    `json:"protocol"`     // tcp, tcp6, udp, udp6
-	LocalAddr   string    `json:"local_addr"`   // IP address
+	Protocol    string    `json:"protocol"`   // tcp, tcp6, udp, udp6
+	LocalAddr   string    `json:"local_addr"` // IP address
 	LocalPort   uint16    `json:"local_port"`
-	RemoteAddr  string    `json:"remote_addr"`  // IP address
+	RemoteAddr  string    `json:"remote_addr"` // IP address
 	RemotePort  uint16    `json:"remote_port"`
-	State       string    `json:"state"`        // ESTABLISHED, LISTEN, TIME_WAIT, etc.
+	State       string    `json:"state"` // ESTABLISHED, LISTEN, TIME_WAIT, etc.
 	PID         int32     `json:"pid"`
 	ProcessName string    `json:"process_name"`
 	Username    string    `json:"username,omitempty"`
@@ -77,13 +78,13 @@ type ConnectionKey struct {
 
 // TrackedConnection tracks connection statistics over time
 type TrackedConnection struct {
-	Key         ConnectionKey `json:"key"`
-	FirstSeen   time.Time     `json:"first_seen"`
-	LastSeen    time.Time     `json:"last_seen"`
-	Occurrences int           `json:"occurrences"` // How many times seen
-	TotalDuration float64     `json:"total_duration_secs"`
-	ProcessName string        `json:"process_name"`
-	PID         int32         `json:"pid"`
+	Key           ConnectionKey `json:"key"`
+	FirstSeen     time.Time     `json:"first_seen"`
+	LastSeen      time.Time     `json:"last_seen"`
+	Occurrences   int           `json:"occurrences"` // How many times seen
+	TotalDuration float64       `json:"total_duration_secs"`
+	ProcessName   string        `json:"process_name"`
+	PID           int32         `json:"pid"`
 
 	// Remote host info (resolved)
 	RemoteHostname string `json:"remote_hostname,omitempty"`

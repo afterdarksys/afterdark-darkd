@@ -1,0 +1,21 @@
+#ifndef ESF_CLIENT_H
+#define ESF_CLIENT_H
+
+#include <EndpointSecurity/EndpointSecurity.h>
+#include <dispatch/dispatch.h>
+
+// Initialize the ES client
+// Returns 0 on success, non-zero on failure
+int init_es_client();
+
+// Subscribe to events
+// Returns 0 on success
+int subscribe_to_events();
+
+// Start receiving events
+void start_handling_events();
+
+// Stop the client
+void stop_es_client();
+
+#endif

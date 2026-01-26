@@ -5,9 +5,9 @@ package linux
 import (
 	"context"
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
+	"syscall"
 
 	"github.com/afterdarksys/afterdark-darkd/internal/platform"
 )
@@ -15,12 +15,19 @@ import (
 // Platform implements the platform.Platform interface for Linux
 type Platform struct {
 	distro string
+	osInfo *platform.OSInfo
 }
 
 // New creates a new Linux platform implementation
 func New() (*Platform, error) {
 	distro := detectDistro()
-	return &Platform{distro: distro}, nil
+	p := &Platform{distro: distro}
+	// Pre-cache OS info
+	info, err := p.GetOSInfo()
+	if err == nil {
+		p.osInfo = info
+	}
+	return p, nil
 }
 
 func detectDistro() string {
@@ -39,15 +46,19 @@ func detectDistro() string {
 	return "unknown"
 }
 
-// GetOSInfo returns Linux system information
+// GetOSInfo returns Linux system information using native APIs
+// instead of exec.Command("uname")
 func (p *Platform) GetOSInfo() (*platform.OSInfo, error) {
-	// Get kernel version
-	kernelOut, err := exec.Command("uname", "-r").Output()
-	if err != nil {
+	// Get kernel version using syscall.Uname instead of exec.Command("uname")
+	var uname syscall.Utsname
+	if err := syscall.Uname(&uname); err != nil {
 		return nil, err
 	}
 
-	// Get OS name and version from /etc/os-release
+	// Convert [65]int8 to string (Linux uses 65-byte arrays)
+	kernelVersion := int8ArrayToString(uname.Release[:])
+
+	// Get OS name and version from /etc/os-release (already native)
 	name := "Linux"
 	version := "unknown"
 	build := ""
@@ -73,8 +84,20 @@ func (p *Platform) GetOSInfo() (*platform.OSInfo, error) {
 		Version:      version,
 		Build:        build,
 		Architecture: runtime.GOARCH,
-		Kernel:       strings.TrimSpace(string(kernelOut)),
+		Kernel:       kernelVersion,
 	}, nil
+}
+
+// int8ArrayToString converts a null-terminated int8 array to string
+func int8ArrayToString(arr []int8) string {
+	b := make([]byte, 0, len(arr))
+	for _, v := range arr {
+		if v == 0 {
+			break
+		}
+		b = append(b, byte(v))
+	}
+	return string(b)
 }
 
 // GetHostname returns the system hostname
@@ -82,61 +105,7 @@ func (p *Platform) GetHostname() (string, error) {
 	return os.Hostname()
 }
 
-// ListInstalledPatches returns installed Linux packages/updates
-func (p *Platform) ListInstalledPatches(ctx context.Context) ([]platform.Patch, error) {
-	switch p.distro {
-	case "debian", "ubuntu":
-		return p.listDebianPatches(ctx)
-	case "rhel", "rocky", "centos", "fedora":
-		return p.listRHELPatches(ctx)
-	default:
-		return []platform.Patch{}, nil
-	}
-}
-
-func (p *Platform) listDebianPatches(ctx context.Context) ([]platform.Patch, error) {
-	// Use dpkg or apt to list packages
-	return []platform.Patch{}, nil
-}
-
-func (p *Platform) listRHELPatches(ctx context.Context) ([]platform.Patch, error) {
-	// Use rpm or yum/dnf to list packages
-	return []platform.Patch{}, nil
-}
-
-// ListAvailablePatches returns available Linux updates
-func (p *Platform) ListAvailablePatches(ctx context.Context) ([]platform.Patch, error) {
-	switch p.distro {
-	case "debian", "ubuntu":
-		return p.listDebianAvailable(ctx)
-	case "rhel", "rocky", "centos", "fedora":
-		return p.listRHELAvailable(ctx)
-	default:
-		return []platform.Patch{}, nil
-	}
-}
-
-func (p *Platform) listDebianAvailable(ctx context.Context) ([]platform.Patch, error) {
-	// Use apt-get upgrade --dry-run or apt list --upgradable
-	return []platform.Patch{}, nil
-}
-
-func (p *Platform) listRHELAvailable(ctx context.Context) ([]platform.Patch, error) {
-	// Use yum check-update or dnf check-update
-	return []platform.Patch{}, nil
-}
-
-// InstallPatch installs a specific package/update
-func (p *Platform) InstallPatch(ctx context.Context, patchID string) error {
-	// Use apt-get or yum/dnf
-	return nil
-}
-
-// ListInstalledApplications returns installed applications
-func (p *Platform) ListInstalledApplications(ctx context.Context) ([]platform.Application, error) {
-	// Use package manager to list installed packages
-	return []platform.Application{}, nil
-}
+// Methods moved to patches.go
 
 // GetNetworkInterfaces returns network interfaces
 func (p *Platform) GetNetworkInterfaces() ([]platform.NetworkInterface, error) {

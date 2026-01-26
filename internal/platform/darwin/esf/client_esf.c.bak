@@ -1,0 +1,85 @@
+#include "client.h"
+#include <stdio.h>
+#include <bsm/libbsm.h>  // For audit_token_to_pid
+
+static es_client_t *client = NULL;
+
+// Callback for handling authorization messages (blocking)
+// In a real app, this would call back into Go
+static void handle_auth_event(es_client_t *c, const es_message_t *msg) {
+    // For now, allow everything
+    es_respond_auth_result(c, msg, ES_AUTH_RESULT_ALLOW, false);
+}
+
+extern void HandleESFEvent(int evtType, int pid, char* path);
+
+// Callback for handling notification messages (async)
+static void handle_notify_event(es_client_t *c, const es_message_t *msg) {
+    if (msg->event_type == ES_EVENT_TYPE_NOTIFY_EXEC) {
+        es_string_token_t path = msg->event.exec.target->executable->path;
+        // Use a static buffer or properly handle length. 
+        // For CGO safety/simplicity, we'll assume null-terminated for now or copy.
+        // es_string_token uses length/pointer, not always null-terminated.
+        
+        char pathBuf[1024];
+        snprintf(pathBuf, sizeof(pathBuf), "%.*s", (int)path.length, path.data);
+        
+        HandleESFEvent(msg->event_type, 
+                       audit_token_to_pid(msg->process->audit_token), 
+                       pathBuf);
+    }
+}
+
+static void event_handler(es_client_t *c, const es_message_t *msg) {
+    switch (msg->action_type) {
+        case ES_ACTION_TYPE_AUTH:
+            handle_auth_event(c, msg);
+            break;
+        case ES_ACTION_TYPE_NOTIFY:
+            handle_notify_event(c, msg);
+            break;
+        default:
+            break;
+    }
+}
+
+int init_es_client() {
+    es_new_client_result_t res = es_new_client(&client, ^(es_client_t *c, const es_message_t *msg) {
+        event_handler(c, msg);
+    });
+
+    if (res != ES_NEW_CLIENT_RESULT_SUCCESS) {
+        fprintf(stderr, "Failed to create ES client: %d\n", res);
+        return -1;
+    }
+    return 0;
+}
+
+int subscribe_to_events() {
+    if (!client) return -1;
+
+    es_event_type_t events[] = {
+        ES_EVENT_TYPE_AUTH_EXEC,
+        ES_EVENT_TYPE_NOTIFY_EXEC,
+        ES_EVENT_TYPE_NOTIFY_FORK,
+        ES_EVENT_TYPE_NOTIFY_EXIT
+    };
+
+    if (es_subscribe(client, events, sizeof(events)/sizeof(events[0])) != ES_RETURN_SUCCESS) {
+        return -1;
+    }
+    return 0;
+}
+
+void start_handling_events() {
+    // ESF uses its own dispatch queue internally usually, or we can clear cache
+    // This is basically a no-op wrapper for now unless we need specific startup logic
+}
+
+void stop_es_client() {
+    if (client) {
+        es_unsubscribe_all(client);
+        es_delete_client(client);
+        client = NULL;
+    }
+}

@@ -14,7 +14,7 @@ import (
 
 // Store implements a JSON file-based storage backend
 type Store struct {
-	config  *storage.Config
+	config   *storage.Config
 	basePath string
 	mu       sync.RWMutex
 	cache    map[string]map[string]interface{} // collection -> key -> data
@@ -88,8 +88,39 @@ func (s *Store) Close() error {
 	return nil
 }
 
+// validateKey checks that a key or collection name is safe and doesn't contain
+// path traversal sequences like ".." or absolute paths.
+// This prevents attackers from reading/writing files outside the storage directory.
+func validateKey(name string) error {
+	if name == "" {
+		return fmt.Errorf("key cannot be empty")
+	}
+	if len(name) > 255 {
+		return fmt.Errorf("key too long")
+	}
+	// Prevent path traversal
+	if filepath.Clean(name) != name {
+		return fmt.Errorf("invalid key: contains path traversal")
+	}
+	if filepath.IsAbs(name) {
+		return fmt.Errorf("invalid key: absolute path not allowed")
+	}
+	if name == ".." || name == "." {
+		return fmt.Errorf("invalid key: relative path not allowed")
+	}
+	return nil
+}
+
 // Save stores data with the given key
 func (s *Store) Save(ctx context.Context, collection, key string, data interface{}) error {
+	// SECURITY: Validate collection and key to prevent path traversal
+	if err := validateKey(collection); err != nil {
+		return fmt.Errorf("invalid collection: %w", err)
+	}
+	if err := validateKey(key); err != nil {
+		return fmt.Errorf("invalid key: %w", err)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -129,6 +160,14 @@ func (s *Store) Save(ctx context.Context, collection, key string, data interface
 
 // Load retrieves data for the given key
 func (s *Store) Load(ctx context.Context, collection, key string, dest interface{}) error {
+	// SECURITY: Validate collection and key to prevent path traversal
+	if err := validateKey(collection); err != nil {
+		return fmt.Errorf("invalid collection: %w", err)
+	}
+	if err := validateKey(key); err != nil {
+		return fmt.Errorf("invalid key: %w", err)
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -149,6 +188,14 @@ func (s *Store) Load(ctx context.Context, collection, key string, dest interface
 
 // Delete removes data for the given key
 func (s *Store) Delete(ctx context.Context, collection, key string) error {
+	// SECURITY: Validate collection and key to prevent path traversal
+	if err := validateKey(collection); err != nil {
+		return fmt.Errorf("invalid collection: %w", err)
+	}
+	if err := validateKey(key); err != nil {
+		return fmt.Errorf("invalid key: %w", err)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

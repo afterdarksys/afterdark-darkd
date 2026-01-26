@@ -5,79 +5,96 @@ package macos
 import (
 	"context"
 	"os"
-	"os/exec"
 	"runtime"
-	"strings"
 
 	"github.com/afterdarksys/afterdark-darkd/internal/platform"
+	"golang.org/x/sys/unix"
+	"howett.net/plist"
 )
 
 // Platform implements the platform.Platform interface for macOS
-type Platform struct{}
+type Platform struct {
+	osInfo *platform.OSInfo
+}
 
 // New creates a new macOS platform implementation
 func New() (*Platform, error) {
-	return &Platform{}, nil
+	p := &Platform{}
+	// Pre-cache OS info
+	info, err := p.GetOSInfo()
+	if err == nil {
+		p.osInfo = info
+	}
+	return p, nil
 }
 
-// GetOSInfo returns macOS system information
+// SystemVersionPlist represents /System/Library/CoreServices/SystemVersion.plist
+type SystemVersionPlist struct {
+	ProductBuildVersion string `plist:"ProductBuildVersion"`
+	ProductName         string `plist:"ProductName"`
+	ProductVersion      string `plist:"ProductVersion"`
+}
+
+// GetOSInfo returns macOS system information using native APIs
+// instead of exec.Command("sw_vers") and exec.Command("uname")
 func (p *Platform) GetOSInfo() (*platform.OSInfo, error) {
-	// Get macOS version
-	versionOut, err := exec.Command("sw_vers", "-productVersion").Output()
+	// Read SystemVersion.plist instead of calling sw_vers
+	plistPath := "/System/Library/CoreServices/SystemVersion.plist"
+	file, err := os.Open(plistPath)
 	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	var sysVer SystemVersionPlist
+	decoder := plist.NewDecoder(file)
+	if err := decoder.Decode(&sysVer); err != nil {
 		return nil, err
 	}
 
-	buildOut, err := exec.Command("sw_vers", "-buildVersion").Output()
-	if err != nil {
+	// Get kernel version using unix.Uname instead of exec.Command("uname")
+	var uname unix.Utsname
+	if err := unix.Uname(&uname); err != nil {
 		return nil, err
 	}
 
-	kernelOut, err := exec.Command("uname", "-r").Output()
-	if err != nil {
-		return nil, err
-	}
+	// Convert [256]byte to string (darwin uses byte arrays)
+	kernelVersion := byteArrayToString(uname.Release[:])
 
 	return &platform.OSInfo{
-		Name:         "macOS",
-		Version:      strings.TrimSpace(string(versionOut)),
-		Build:        strings.TrimSpace(string(buildOut)),
+		Name:         sysVer.ProductName,
+		Version:      sysVer.ProductVersion,
+		Build:        sysVer.ProductBuildVersion,
 		Architecture: runtime.GOARCH,
-		Kernel:       strings.TrimSpace(string(kernelOut)),
+		Kernel:       kernelVersion,
 	}, nil
+}
+
+// byteArrayToString converts a null-terminated byte array to string
+func byteArrayToString(arr []byte) string {
+	for i, b := range arr {
+		if b == 0 {
+			return string(arr[:i])
+		}
+	}
+	return string(arr)
+}
+
+// int8ArrayToString converts a null-terminated int8 array to string
+func int8ArrayToString(arr []int8) string {
+	b := make([]byte, 0, len(arr))
+	for _, v := range arr {
+		if v == 0 {
+			break
+		}
+		b = append(b, byte(v))
+	}
+	return string(b)
 }
 
 // GetHostname returns the system hostname
 func (p *Platform) GetHostname() (string, error) {
 	return os.Hostname()
-}
-
-// ListInstalledPatches returns installed macOS updates
-func (p *Platform) ListInstalledPatches(ctx context.Context) ([]platform.Patch, error) {
-	// Use softwareupdate --history to get installed updates
-	// This is a stub implementation
-	return []platform.Patch{}, nil
-}
-
-// ListAvailablePatches returns available macOS updates
-func (p *Platform) ListAvailablePatches(ctx context.Context) ([]platform.Patch, error) {
-	// Use softwareupdate -l to list available updates
-	// This is a stub implementation
-	return []platform.Patch{}, nil
-}
-
-// InstallPatch installs a specific patch
-func (p *Platform) InstallPatch(ctx context.Context, patchID string) error {
-	// Use softwareupdate -i to install
-	// This is a stub implementation
-	return nil
-}
-
-// ListInstalledApplications returns installed applications
-func (p *Platform) ListInstalledApplications(ctx context.Context) ([]platform.Application, error) {
-	// Use system_profiler SPApplicationsDataType
-	// This is a stub implementation
-	return []platform.Application{}, nil
 }
 
 // GetNetworkInterfaces returns network interfaces

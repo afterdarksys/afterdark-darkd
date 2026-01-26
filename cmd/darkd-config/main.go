@@ -10,16 +10,19 @@
 // - Quick security configuration wizards
 //
 // Build:
-//   go build -o darkd-config .
+//
+//	go build -o darkd-config .
 //
 // Requirements:
-//   go get fyne.io/fyne/v2
+//
+//	go get fyne.io/fyne/v2
 package main
 
 import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -27,7 +30,6 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
-	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
@@ -635,25 +637,11 @@ func (a *App) openLogViewer() {
 	d.Show()
 }
 
-func (a *App) openURL(url string) {
-	fyne.CurrentApp().OpenURL(parseURL(url))
+func (a *App) openURL(urlStr string) {
+	u, err := url.Parse(urlStr)
+	if err != nil {
+		dialog.ShowError(err, a.mainWindow)
+		return
+	}
+	fyne.CurrentApp().OpenURL(u)
 }
-
-func parseURL(urlStr string) *fyne.URI {
-	u := &url{urlStr}
-	return u
-}
-
-type url struct {
-	s string
-}
-
-func (u *url) String() string    { return u.s }
-func (u *url) Extension() string { return "" }
-func (u *url) Name() string      { return u.s }
-func (u *url) MimeType() string  { return "" }
-func (u *url) Scheme() string    { return "https" }
-func (u *url) Authority() string { return "" }
-func (u *url) Path() string      { return u.s }
-func (u *url) Query() string     { return "" }
-func (u *url) Fragment() string  { return "" }

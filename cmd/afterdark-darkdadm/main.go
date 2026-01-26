@@ -12,9 +12,11 @@ import (
 	"syscall"
 	"time"
 
+	ipcpb "github.com/afterdarksys/afterdark-darkd/api/proto/ipc"
 	"github.com/afterdarksys/afterdark-darkd/internal/identity"
-	"github.com/shirou/gopsutil/v3/process"
+	"github.com/afterdarksys/afterdark-darkd/internal/ipc"
 	gopsnet "github.com/shirou/gopsutil/v3/net"
+	"github.com/shirou/gopsutil/v3/process"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -65,6 +67,11 @@ Use 'darkdadm api' for direct API operations.`,
 	rootCmd.AddCommand(psCmd())
 	rootCmd.AddCommand(netstatCmd())
 	rootCmd.AddCommand(servicesCmd())
+	rootCmd.AddCommand(canaryCmd())
+	rootCmd.AddCommand(honeypotCmd())
+	rootCmd.AddCommand(deviceCmd())
+	rootCmd.AddCommand(policyCmd())
+	rootCmd.AddCommand(consoleCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -449,10 +456,50 @@ func statusCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, _ := identity.LoadIdentity()
 
+			// Connect to daemon
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			client, err := ipc.NewClient(ctx, socketPath)
+			if err != nil {
+				// Fallback to offline status if daemon is not running
+				if outputJSON {
+					status := map[string]interface{}{
+						"daemon":   "stopped",
+						"socket":   socketPath,
+						"identity": id,
+						"error":    err.Error(),
+					}
+					data, _ := json.MarshalIndent(status, "", "  ")
+					fmt.Println(string(data))
+					return nil
+				}
+
+				fmt.Println("Daemon Status")
+				fmt.Println("=============")
+				fmt.Printf("Socket: %s\n", socketPath)
+				fmt.Println("Status: stopped (or unreachable)")
+				fmt.Printf("Error:  %v\n", err)
+				return nil
+			}
+
+			// Fetch status from daemon
+			statusResp, err := client.GetStatus(ctx, &ipcpb.StatusRequest{})
+			if err != nil {
+				return fmt.Errorf("failed to get status from daemon: %w", err)
+			}
+
+			// Fetch service health
+			healthResp, err := client.GetHealth(ctx, &ipcpb.HealthRequest{})
+			if err != nil {
+				// Don't fail completely if health check fails
+				fmt.Fprintf(os.Stderr, "Warning: failed to get health status: %v\n", err)
+			}
+
 			if outputJSON {
 				status := map[string]interface{}{
-					"daemon":   "running",
-					"socket":   socketPath,
+					"daemon":   statusResp,
+					"health":   healthResp,
 					"identity": id,
 				}
 				data, _ := json.MarshalIndent(status, "", "  ")
@@ -462,17 +509,19 @@ func statusCmd() *cobra.Command {
 
 			fmt.Println("Daemon Status")
 			fmt.Println("=============")
-			fmt.Printf("Socket: %s\n", socketPath)
-			fmt.Println("Status: running")
-			fmt.Println("Uptime: 0h 0m 0s")
+			fmt.Printf("Socket:   %s\n", socketPath)
+			fmt.Printf("Status:   %s\n", statusResp.State)
+			fmt.Printf("Version:  %s\n", statusResp.Version)
+			fmt.Printf("PID:      %d\n", statusResp.Pid)
+			fmt.Printf("Uptime:   %s\n", time.Duration(statusResp.UptimeSeconds)*time.Second)
+			fmt.Printf("Hostname: %s\n", statusResp.Hostname)
 
 			if id != nil {
 				fmt.Println()
 				fmt.Println("System Identity")
 				fmt.Println("---------------")
 				fmt.Printf("System ID:  %s\n", id.SystemID)
-				fmt.Printf("Hostname:   %s\n", id.Hostname)
-				fmt.Printf("OS/Arch:    %s/%s\n", id.OS, id.Arch)
+
 				if id.Registered {
 					fmt.Printf("Account:    %s\n", id.AccountEmail)
 					fmt.Printf("Registered: %s\n", id.RegisteredAt)
@@ -481,12 +530,22 @@ func statusCmd() *cobra.Command {
 				}
 			}
 
-			fmt.Println()
-			fmt.Println("Services:")
-			fmt.Println("  patch_monitor:    healthy")
-			fmt.Println("  threat_intel:     healthy")
-			fmt.Println("  baseline_scanner: healthy")
-			fmt.Println("  network_monitor:  healthy")
+			if healthResp != nil && len(healthResp.Services) > 0 {
+				fmt.Println()
+				fmt.Println("Services:")
+
+				// Sort services by name
+				var names []string
+				for name := range healthResp.Services {
+					names = append(names, name)
+				}
+				sort.Strings(names)
+
+				for _, name := range names {
+					svc := healthResp.Services[name]
+					fmt.Printf("  %-18s %s\n", name+":", svc.Status)
+				}
+			}
 			return nil
 		},
 	}

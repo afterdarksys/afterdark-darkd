@@ -131,20 +131,6 @@ func Detect() string {
 	return runtime.GOOS
 }
 
-// Factory returns the appropriate Platform implementation for the current OS
-func Factory() (Platform, error) {
-	switch runtime.GOOS {
-	case "darwin":
-		return NewMacOS()
-	case "windows":
-		return NewWindows()
-	case "linux":
-		return NewLinux()
-	default:
-		return nil, &ErrUnsupportedPlatform{OS: runtime.GOOS}
-	}
-}
-
 // ErrUnsupportedPlatform is returned when the OS is not supported
 type ErrUnsupportedPlatform struct {
 	OS string

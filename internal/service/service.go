@@ -7,6 +7,13 @@ import (
 	"time"
 )
 
+// Registry interface defines methods for service registry access
+type RegistryInterface interface {
+	Get(name string) Service
+	All() []Service
+	List() []string
+}
+
 // Service defines the interface all services must implement
 type Service interface {
 	// Name returns the service identifier
@@ -90,8 +97,16 @@ func (r *Registry) Register(svc Service) error {
 	return nil
 }
 
-// Get returns a service by name
-func (r *Registry) Get(name string) (Service, bool) {
+// Get returns a service by name, or nil if not found
+func (r *Registry) Get(name string) Service {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	return r.services[name]
+}
+
+// GetOk returns a service by name with existence check
+func (r *Registry) GetOk(name string) (Service, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -150,4 +165,16 @@ func (r *Registry) List() []string {
 	names := make([]string, len(r.order))
 	copy(names, r.order)
 	return names
+}
+
+// All returns all registered services
+func (r *Registry) All() []Service {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	services := make([]Service, 0, len(r.order))
+	for _, name := range r.order {
+		services = append(services, r.services[name])
+	}
+	return services
 }

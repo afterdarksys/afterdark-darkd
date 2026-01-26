@@ -17,6 +17,7 @@ import (
 	"github.com/shirou/gopsutil/v3/host"
 	"github.com/shirou/gopsutil/v3/net"
 	"github.com/shirou/gopsutil/v3/process"
+	"go.uber.org/zap"
 )
 
 // Collector gathers system behavioral data and submits to ADSS
@@ -24,6 +25,7 @@ type Collector struct {
 	config     *models.Config
 	httpClient *http.Client
 	endpointID string
+	iocMatcher *IOCMatcher
 }
 
 // SystemSnapshot represents the snapshot sent to behavior analytics server
@@ -160,10 +162,11 @@ type Package struct {
 }
 
 // NewCollector creates a new behavior collector
-func NewCollector(config *models.Config, endpointID string) *Collector {
+func NewCollector(config *models.Config, endpointID string, log *zap.Logger) *Collector {
 	return &Collector{
 		config:     config,
 		endpointID: endpointID,
+		iocMatcher: NewIOCMatcher(log),
 		httpClient: &http.Client{
 			Timeout: config.API.AfterDark.Timeout,
 			Transport: &http.Transport{
@@ -496,4 +499,67 @@ type RiskScoreResponse struct {
 	LowCount           int       `json:"low_count"`
 	ExploitAvailable   bool      `json:"exploit_available"`
 	LastUpdated        time.Time `json:"last_updated"`
+}
+
+// LoadOpenIOCRules loads OpenIOC rules from raw XML data
+func (c *Collector) LoadOpenIOCRules(xmlData []byte) error {
+	return c.iocMatcher.LoadRules(xmlData)
+}
+
+// MatchIOCs applies loaded OpenIOC rules against collected snapshot data
+func (c *Collector) MatchIOCs(snapshot *SystemSnapshot) []IOCMatch {
+	var allMatches []IOCMatch
+
+	// Match file IOCs
+	for _, fileIOC := range snapshot.SuspiciousFiles {
+		matches := c.iocMatcher.MatchFileIOC(fileIOC)
+		allMatches = append(allMatches, matches...)
+		
+		// Update suspicious flag if matched
+		if len(matches) > 0 {
+			fileIOC.Suspicious = true
+			fileIOC.SuspiciousNote = fmt.Sprintf("Matched OpenIOC: %s", matches[0].IOCName)
+		}
+	}
+
+	// Match network IOCs
+	for _, netIOC := range snapshot.NetworkConnections {
+		matches := c.iocMatcher.MatchNetworkIOC(netIOC)
+		allMatches = append(allMatches, matches...)
+		
+		// Update suspicious flag if matched
+		if len(matches) > 0 {
+			netIOC.Suspicious = true
+			netIOC.SuspiciousNote = fmt.Sprintf("Matched OpenIOC: %s", matches[0].IOCName)
+		}
+	}
+
+	// Match process IOCs
+	for _, proc := range snapshot.RunningProcesses {
+		matches := c.iocMatcher.MatchProcessIOC(proc)
+		allMatches = append(allMatches, matches...)
+		
+		// Update suspicious flag if matched
+		if len(matches) > 0 {
+			proc.Suspicious = true
+			proc.SuspiciousNote = fmt.Sprintf("Matched OpenIOC: %s", matches[0].IOCName)
+		}
+	}
+
+	return allMatches
+}
+
+// GetIOCRuleCount returns the number of loaded OpenIOC rules
+func (c *Collector) GetIOCRuleCount() int {
+	if c.iocMatcher == nil {
+		return 0
+	}
+	return c.iocMatcher.GetRuleCount()
+}
+
+// ClearIOCRules clears all loaded OpenIOC rules
+func (c *Collector) ClearIOCRules() {
+	if c.iocMatcher != nil {
+		c.iocMatcher.ClearRules()
+	}
 }
