@@ -127,6 +127,7 @@ class AuthentikOAuthCLI:
         client_id: str,
         redirect_uris: list,
         launch_url: str,
+        client_type: str = "confidential",
     ) -> dict:
         """
         Complete OAuth app creation (provider + application)
@@ -137,6 +138,7 @@ class AuthentikOAuthCLI:
             name=f"{app_name} Provider",
             client_id=client_id,
             redirect_uris=redirect_uris,
+            client_type=client_type,
         )
 
         app = self.create_application(
@@ -207,6 +209,8 @@ def main():
     # Bootstrap command - create all AfterDark apps
     bootstrap_parser = subparsers.add_parser("bootstrap", help="Bootstrap all AfterDark OAuth apps")
     bootstrap_parser.add_argument("--json", action="store_true", help="Output as JSON")
+    bootstrap_parser.add_argument("--config", help="Load apps from JSON config file")
+    bootstrap_parser.add_argument("--skip-existing", action="store_true", help="Skip already existing apps")
 
     args = parser.parse_args()
 
@@ -245,39 +249,69 @@ def main():
                 print(json.dumps(item, indent=2))
 
     elif args.command == "bootstrap":
-        apps_config = [
-            {
-                "app_name": "AfterDark HTTP Proxy",
-                "app_slug": "ads-httpproxy",
-                "client_id": "ads-httpproxy-client",
-                "redirect_uris": [
-                    "http://localhost:8080/oauth/callback",
-                    "https://proxy.afterdark.local/oauth/callback"
-                ],
-                "launch_url": "http://localhost:8080/",
-            },
-            {
-                "app_name": "AfterDark Management Console",
-                "app_slug": "ads-management",
-                "client_id": "ads-management-console",
-                "redirect_uris": [
-                    "http://localhost:9100/oauth/callback",
-                    "https://console.afterdark.local/oauth/callback"
-                ],
-                "launch_url": "http://localhost:9100/",
-            },
-        ]
+        # Load from config file if provided
+        if args.config:
+            with open(args.config, 'r') as f:
+                config_data = json.load(f)
+                apps_config = config_data.get("apps", [])
+        else:
+            # Default config for backward compatibility
+            apps_config = [
+                {
+                    "app_name": "AfterDark HTTP Proxy",
+                    "app_slug": "ads-httpproxy",
+                    "client_id": "ads-httpproxy-client",
+                    "redirect_uris": [
+                        "http://localhost:8080/oauth/callback",
+                        "https://proxy.afterdark.local/oauth/callback"
+                    ],
+                    "launch_url": "http://localhost:8080/",
+                },
+                {
+                    "app_name": "AfterDark Management Console",
+                    "app_slug": "ads-management",
+                    "client_id": "ads-management-console",
+                    "redirect_uris": [
+                        "http://localhost:9100/oauth/callback",
+                        "https://console.afterdark.local/oauth/callback"
+                    ],
+                    "launch_url": "http://localhost:9100/",
+                },
+            ]
 
         results = []
+        skipped = []
         for app_config in apps_config:
-            result = cli.create_oauth_app(**app_config)
-            results.append(result)
+            # Extract only the fields needed for create_oauth_app
+            create_args = {
+                "app_name": app_config["app_name"],
+                "app_slug": app_config["app_slug"],
+                "client_id": app_config["client_id"],
+                "redirect_uris": app_config["redirect_uris"],
+                "launch_url": app_config["launch_url"],
+                "client_type": app_config.get("client_type", "confidential"),
+            }
+
+            try:
+                result = cli.create_oauth_app(**create_args)
+                # Check if it already existed
+                if args.skip_existing and "already exists" in str(result):
+                    skipped.append(app_config["app_slug"])
+                    continue
+                results.append(result)
+            except Exception as e:
+                print(f"Error creating {app_config['app_slug']}: {e}", file=sys.stderr)
+                if not args.skip_existing:
+                    raise
 
         if args.json:
-            print(json.dumps(results, indent=2))
+            output = {"created": results, "skipped": skipped}
+            print(json.dumps(output, indent=2))
         else:
             print("✓ Bootstrap complete!")
-            print("\nCreated OAuth apps:")
+            if skipped:
+                print(f"\n⊘ Skipped {len(skipped)} existing apps: {', '.join(skipped)}")
+            print(f"\n✓ Created {len(results)} OAuth apps:")
             for result in results:
                 print(f"\n{result['app_name']}:")
                 print(f"  Client ID: {result['client_id']}")
