@@ -2,10 +2,13 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"sort"
 	"strings"
@@ -52,7 +55,9 @@ Use 'darkdadm api' for direct API operations.`,
 
 	// Add subcommands
 	rootCmd.AddCommand(loginCmd())
+	rootCmd.AddCommand(registerCmd())
 	rootCmd.AddCommand(logoutCmd())
+	rootCmd.AddCommand(apiCmd())
 	rootCmd.AddCommand(apiCmd())
 	rootCmd.AddCommand(scanCmd())
 	rootCmd.AddCommand(discoveryCmd())
@@ -149,19 +154,64 @@ After login, this system will be registered to your account.`,
 
 			fmt.Println("Authenticating...")
 
-			// TODO: Actual API call to authenticate
-			// For now, simulate success
-			time.Sleep(500 * time.Millisecond)
+			// Construct request
+			loginReq := map[string]string{
+				"email":    email,
+				"password": password,
+			}
+			jsonBody, _ := json.Marshal(loginReq)
+
+			// Create HTTP client with timeout and (insecure for dev) transport
+			tr := &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // TODO: Use proper CA in production
+			}
+			client := &http.Client{
+				Timeout:   30 * time.Second,
+				Transport: tr,
+			}
+
+			// Call /api/v1/auth/login
+			resp, err := client.Post(fmt.Sprintf("%s/api/v1/auth/login", apiURL), "application/json", bytes.NewBuffer(jsonBody))
+			if err != nil {
+				return fmt.Errorf("authentication failed: %w", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				return fmt.Errorf("login failed: status %d", resp.StatusCode)
+			}
+
+			// Parse response
+			var loginResp struct {
+				Token string `json:"token"`
+				User  struct {
+					ID       string `json:"user_id"`
+					Role     string `json:"role"`
+					Username string `json:"username"`
+				} `json:"user"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&loginResp); err != nil {
+				return fmt.Errorf("failed to parse response: %w", err)
+			}
 
 			id.Registered = true
 			id.RegisteredAt = time.Now().Format(time.RFC3339)
 			id.AccountEmail = email
+			// Store the JWT token - reusing system_id file fields or ideally a new secrets file
+			// For this implementation valid within existing 'identity' package constraints:
+			// We might need to extend the Identity struct or save a separate token file.
+			// Saving to a separate creds file is better.
+			if err := saveCredentials(loginResp.Token); err != nil {
+				fmt.Printf("Warning: failed to save token: %v\n", err)
+			}
+
 			if err := id.Save(); err != nil {
 				return fmt.Errorf("failed to save identity: %w", err)
 			}
 
 			fmt.Println("\nLogin successful!")
 			fmt.Printf("Account: %s\n", email)
+			fmt.Printf("User ID: %s (%s)\n", loginResp.User.ID, loginResp.User.Role)
 			fmt.Printf("System ID: %s\n", id.SystemID)
 			fmt.Println("\nThis system is now registered to your account.")
 
