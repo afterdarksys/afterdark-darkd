@@ -24,6 +24,7 @@ All users have default password: `TempPass123!` (should be changed on first logi
 ### 1. AfterDark Security Suite
 - **Slug:** `afterdark-security-suite`
 - **Client ID:** `afterdark-security-suite`
+- **Client Secret:** `h9WzY5KgE4TVFNmrBXIEDfhrUxqvhD54UP22LlMKfmoC0Lq8Y2A20JnPfx4lyDPUN9hwRVaqTHFYdXTVIiLYN5AnUNrPJrlBnLXNJU9mFs9LzpqhsiYqjdmOqgSkwwQn`
 - **Redirect URIs:**
   - http://localhost:9090/oauth/callback
   - https://security.afterdark.local/oauth/callback
