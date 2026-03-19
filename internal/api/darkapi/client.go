@@ -150,3 +150,19 @@ func (c *Client) BulkLookup(ctx context.Context, req *BulkLookupRequest) (*BulkL
 func (c *Client) Health(ctx context.Context) error {
 	return c.client.Get(ctx, "/health", nil)
 }
+
+// TelemetryReport represents a full system software inventory report for the darkd endpoint
+type TelemetryReport struct {
+	SystemID         string      `json:"system_id"`
+	Hostname         string      `json:"hostname"`
+	OSFamily         string      `json:"os_family"`
+	OSVersion        string      `json:"os_version"`
+	KernelVersion    string      `json:"kernel_version"`
+	InstalledPatches []string    `json:"installed_patches"` // IDs or KB articles
+	SoftwareCatalog  interface{} `json:"software_catalog"`  // Any custom struct or platform.Application
+}
+
+// ReportTelemetry submits the software inventory to DarkAPI
+func (c *Client) ReportTelemetry(ctx context.Context, report *TelemetryReport) error {
+	return c.client.Post(ctx, "/api/v1/darkd/telemetry", report, nil)
+}

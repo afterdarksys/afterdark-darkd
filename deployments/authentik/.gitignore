@@ -1,7 +1,11 @@
 # Secrets and credentials
 .env
+.env.production
 terraform.tfvars
 *.tfvars
+
+# Service-specific environment files
+config/services/**/.env*
 
 # Terraform state files
 terraform.tfstate

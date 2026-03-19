@@ -44,6 +44,9 @@ type Config struct {
 
 	// MaxConnections limits concurrent connections
 	MaxConnections int
+
+	// TCPAddr is the TCP address to listen on (e.g. ":8080")
+	TCPAddr string
 }
 
 // DefaultConfig returns the default IPC configuration
@@ -80,10 +83,10 @@ type Server struct {
 	authMu    sync.RWMutex
 
 	// Shutdown coordination
-	mu       sync.RWMutex
-	running  bool
-	stopCh   chan struct{}
-	doneCh   chan struct{}
+	mu      sync.RWMutex
+	running bool
+	stopCh  chan struct{}
+	doneCh  chan struct{}
 }
 
 // New creates a new IPC server
@@ -217,8 +220,22 @@ func (s *Server) createListener() (net.Listener, error) {
 		return s.createWindowsListener()
 	}
 
+	// TCP listener
+	if s.config.TCPAddr != "" {
+		return s.createTCPListener()
+	}
+
 	// Unix socket
 	return s.createUnixListener()
+}
+
+// createTCPListener creates a TCP listener
+func (s *Server) createTCPListener() (net.Listener, error) {
+	listener, err := net.Listen("tcp", s.config.TCPAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to listen on TCP %s: %w", s.config.TCPAddr, err)
+	}
+	return listener, nil
 }
 
 // createUnixListener creates a Unix domain socket listener
@@ -812,7 +829,7 @@ func (s *Server) GetMemoryScanResults(ctx context.Context, req *pb.GetMemoryScan
 	if memSvc == nil {
 		return &pb.MemoryScanResultsResponse{
 			Results:         []*pb.MemoryScanResult{},
-			TotalScanned:   0,
+			TotalScanned:    0,
 			SuspiciousCount: 0,
 		}, nil
 	}
@@ -822,7 +839,7 @@ func (s *Server) GetMemoryScanResults(ctx context.Context, req *pb.GetMemoryScan
 
 	return &pb.MemoryScanResultsResponse{
 		Results:         results,
-		TotalScanned:   0,
+		TotalScanned:    0,
 		SuspiciousCount: 0,
 	}, nil
 }

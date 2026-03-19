@@ -106,6 +106,22 @@ func (c *Client) ReportPatches(ctx context.Context, report *PatchReport) error {
 	return c.client.Post(ctx, "/v1/endpoints/patches", report, nil)
 }
 
+// TelemetryReport represents a full system software inventory report
+type TelemetryReport struct {
+	SystemID         string                 `json:"system_id"`
+	Hostname         string                 `json:"hostname"`
+	OSFamily         string                 `json:"os_family"`
+	OSVersion        string                 `json:"os_version"`
+	KernelVersion    string                 `json:"kernel_version"`
+	InstalledPatches []string               `json:"installed_patches"` // IDs or KB articles
+	SoftwareCatalog  []platform.Application `json:"software_catalog"`
+}
+
+// ReportTelemetry submits the software inventory and OS catalog to DarkAPI/darkd endpoint
+func (c *Client) ReportTelemetry(ctx context.Context, report *TelemetryReport) error {
+	return c.client.Post(ctx, "/api/v1/darkd/telemetry", report, nil)
+}
+
 // GetEndpointStatus retrieves endpoint status
 func (c *Client) GetEndpointStatus(ctx context.Context, endpointID string) (*EndpointRegistration, error) {
 	var result EndpointRegistration

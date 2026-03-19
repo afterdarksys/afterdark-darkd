@@ -235,6 +235,46 @@ func (s *Service) performScan(ctx context.Context) {
 		s.logger.Error("failed to save scan result", zap.Error(err))
 	}
 
+	// Build and submit telemetry report
+	if s.apiClient != nil {
+		hostname, _ := s.platform.GetHostname()
+		osInfo, err := s.platform.GetOSInfo()
+		
+		var osFamily, osVer, kernVer string
+		if err == nil && osInfo != nil {
+			osFamily = osInfo.Name
+			osVer = osInfo.Version
+			kernVer = osInfo.Kernel
+		}
+		
+		apps, appErr := s.platform.ListInstalledApplications(ctx)
+		if appErr != nil {
+			s.logger.Warn("failed to list installed applications for telemetry", zap.Error(appErr))
+			apps = []platform.Application{} // Safe default
+		}
+		
+		var installedPatchIDs []string
+		for _, idx := range installed {
+			installedPatchIDs = append(installedPatchIDs, idx.ID)
+		}
+
+		telemetry := &afterdark.TelemetryReport{
+			SystemID:         "local-agent", // Will typically come from identity service
+			Hostname:         hostname,
+			OSFamily:         osFamily,
+			OSVersion:        osVer,
+			KernelVersion:    kernVer,
+			InstalledPatches: installedPatchIDs,
+			SoftwareCatalog:  apps,
+		}
+		
+		if err := s.apiClient.ReportTelemetry(ctx, telemetry); err != nil {
+			s.logger.Error("failed to submit telemetry report to DarkAPI", zap.Error(err))
+		} else {
+			s.logger.Info("successfully submitted telemetry report")
+		}
+	}
+
 	s.logger.Info("patch scan complete",
 		zap.Int("installed", len(installed)),
 		zap.Int("available", len(available)),

@@ -5,6 +5,8 @@ package linux
 import (
 	"context"
 	"fmt"
+	"os/exec"
+	"strings"
 
 	"github.com/afterdarksys/afterdark-darkd/internal/platform"
 )
@@ -31,6 +33,41 @@ func (p *Platform) InstallPatch(ctx context.Context, patchID string) error {
 
 // ListInstalledApplications returns installed applications
 func (p *Platform) ListInstalledApplications(ctx context.Context) ([]platform.Application, error) {
-	// TODO: Implement using dpkg/rpm
-	return []platform.Application{}, nil
+	var apps []platform.Application
+
+	if p.distro == "ubuntu" || p.distro == "debian" {
+		cmd := exec.CommandContext(ctx, "dpkg-query", "-W", "-f=${Package}|||${Version}\n")
+		output, err := cmd.Output()
+		if err == nil {
+			lines := strings.Split(string(output), "\n")
+			for _, line := range lines {
+				parts := strings.Split(line, "|||")
+				if len(parts) == 2 {
+					apps = append(apps, platform.Application{
+						Name:    strings.TrimSpace(parts[0]),
+						Version: strings.TrimSpace(parts[1]),
+						Vendor:  "Debian/Ubuntu",
+					})
+				}
+			}
+		}
+	} else {
+		// RPM-based (RHEL, Rocky, Fedora)
+		cmd := exec.CommandContext(ctx, "rpm", "-qa", "--qf", "%{NAME}|||%{VERSION}-%{RELEASE}\n")
+		output, err := cmd.Output()
+		if err == nil {
+			lines := strings.Split(string(output), "\n")
+			for _, line := range lines {
+				parts := strings.Split(line, "|||")
+				if len(parts) == 2 {
+					apps = append(apps, platform.Application{
+						Name:    strings.TrimSpace(parts[0]),
+						Version: strings.TrimSpace(parts[1]),
+						Vendor:  "RedHat/Rocky",
+					})
+				}
+			}
+		}
+	}
+	return apps, nil
 }

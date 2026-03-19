@@ -162,6 +162,7 @@ type IPCConfig struct {
 	SocketPath    string `yaml:"socket_path" json:"socket_path"`
 	AuthEnabled   bool   `yaml:"auth_enabled" json:"auth_enabled"`
 	AuthTokenFile string `yaml:"auth_token_file" json:"auth_token_file"`
+	TCPAddr       string `yaml:"tcp_addr" json:"tcp_addr"`
 }
 
 // DefaultConfig returns a configuration with sensible defaults

@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/afterdarksys/afterdark-darkd/internal/ipc"
 	"github.com/afterdarksys/afterdark-darkd/internal/models"
 	"github.com/afterdarksys/afterdark-darkd/internal/plugin"
 	"github.com/afterdarksys/afterdark-darkd/internal/service"
@@ -61,6 +62,9 @@ type Daemon struct {
 
 	// PID file management
 	pidFile string
+
+	// IPC Server
+	ipcServer *ipc.Server
 }
 
 // New creates a new daemon instance
@@ -78,12 +82,29 @@ func New(cfg *models.Config) (*Daemon, error) {
 	}
 	pluginHost := plugin.NewHost(pluginDir, logger)
 
+	// Initialize IPC server
+	ipcConfig := &ipc.Config{
+		SocketPath:     cfg.IPC.SocketPath,
+		AuthTokenPath:  cfg.IPC.AuthTokenFile,
+		RequireAuth:    cfg.IPC.AuthEnabled,
+		TCPAddr:        cfg.IPC.TCPAddr,
+		MaxConnections: 100, // could be config
+	}
+
+	registry := service.NewRegistry()
+
+	ipcServer, err := ipc.New(ipcConfig, registry)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize IPC server: %w", err)
+	}
+
 	return &Daemon{
 		config:     cfg,
-		registry:   service.NewRegistry(),
+		registry:   registry,
 		state:      StateInit,
 		logger:     logger,
 		pluginHost: pluginHost,
+		ipcServer:  ipcServer,
 		shutdownCh: make(chan struct{}),
 		doneCh:     make(chan struct{}),
 		pidFile:    cfg.Daemon.PIDFile,
@@ -149,6 +170,19 @@ func (d *Daemon) Start(ctx context.Context) error {
 		d.logger.Warn("failed to start some plugin services", zap.Error(err))
 	}
 
+	// Start IPC server (gRPC)
+	if err := d.ipcServer.Start(ctx); err != nil {
+		d.logger.Error("failed to start IPC server", zap.Error(err))
+		// We might want to fail the daemon if IPC fails, or just warn
+		// For "needs support gRPC", it's probably critical to the user
+		d.removePIDFile()
+		return fmt.Errorf("failed to start IPC server: %w", err)
+	}
+
+	d.logger.Info("IPC server started",
+		zap.String("socket", d.config.IPC.SocketPath),
+		zap.String("tcp", d.config.IPC.TCPAddr))
+
 	d.setState(StateRunning)
 	d.logger.Info("daemon started successfully",
 		zap.Int("plugins_loaded", len(d.pluginHost.ListPlugins())),
@@ -164,6 +198,13 @@ func (d *Daemon) Stop(ctx context.Context) error {
 
 	// Signal shutdown
 	close(d.shutdownCh)
+
+	// Stop IPC server
+	if d.ipcServer != nil {
+		if err := d.ipcServer.Stop(ctx); err != nil {
+			d.logger.Error("error stopping IPC server", zap.Error(err))
+		}
+	}
 
 	// Stop plugin services first
 	d.stopPluginServices(ctx)

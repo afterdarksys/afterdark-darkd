@@ -10,6 +10,7 @@ import (
 
 	"github.com/afterdarksys/afterdark-darkd/internal/daemon"
 	"github.com/afterdarksys/afterdark-darkd/internal/identity"
+	"github.com/afterdarksys/afterdark-darkd/internal/models"
 	"github.com/afterdarksys/afterdark-darkd/pkg/logging"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -242,21 +243,30 @@ func statusCmd() *cobra.Command {
 }
 
 func apiCmd() *cobra.Command {
+	var port string
+
 	cmd := &cobra.Command{
 		Use:   "api",
 		Short: "API server mode",
 		Long:  "Run only the API server without the full daemon services.",
 	}
 
-	cmd.AddCommand(&cobra.Command{
+	startCmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start API server only",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("Starting API server on :8080...")
-			fmt.Println("(API-only mode not yet implemented)")
-			return nil
+			fmt.Printf("Starting API server on %s...\n", port)
+
+			// Set API mode flag
+			os.Setenv("AFTERDARK_API_MODE", "true")
+			os.Setenv("AFTERDARK_API_PORT", port)
+
+			return runService(cmd, args)
 		},
-	})
+	}
+
+	startCmd.Flags().StringVarP(&port, "port", "p", ":8080", "TCP port to listen on")
+	cmd.AddCommand(startCmd)
 
 	return cmd
 }
@@ -679,6 +689,11 @@ func installLaunchdService() error {
 		return fmt.Errorf("failed to write plist file: %w", err)
 	}
 
+	// Ensure log directory exists
+	if err := os.MkdirAll("/var/log/afterdark", 0755); err != nil {
+		return fmt.Errorf("failed to create log directory: %w", err)
+	}
+
 	fmt.Println("Launchd service installed successfully")
 	fmt.Println("Run 'afterdark-darkd service enable' to load the service")
 	return nil
@@ -748,9 +763,7 @@ func disableSystemService() error {
 	return fmt.Errorf("no supported service manager found")
 }
 
-func runService(cmd *cobra.Command, args []string) error {
-	return runDaemon(cmd, args)
-}
+// runService is defined in service_posix.go and service_windows.go
 
 func runDaemon(cmd *cobra.Command, args []string) error {
 	// Setup signal handling
@@ -820,6 +833,24 @@ func runDaemonWithContext(ctx context.Context) error {
 	if err != nil {
 		logger.Error("failed to load configuration", zap.Error(err))
 		return fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	// Check for API mode override
+	if os.Getenv("AFTERDARK_API_MODE") == "true" {
+		logger.Info("Starting in API-only mode")
+
+		// Disable all services
+		cfg.Services = models.ServicesConfig{} // Empty struct disables all
+
+		// Set TCP Address
+		port := os.Getenv("AFTERDARK_API_PORT")
+		if port == "" {
+			port = ":8080"
+		}
+		cfg.IPC.TCPAddr = port
+
+		// Ensure socket path is valid or empty if conflicting
+		// Keep socket path for local admin tool access if wanted, but fine to keep defaults
 	}
 
 	// Create daemon
