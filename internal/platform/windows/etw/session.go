@@ -3,9 +3,9 @@
 package etw
 
 import (
+	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/0xrawsec/golang-etw/etw"
 	"go.uber.org/zap"
@@ -14,9 +14,10 @@ import (
 // Session manages an ETW trace session
 type Session struct {
 	Name    string
-	Session *etw.Session
+	Session *etw.RealTimeSession
 	logger  *zap.Logger
 	mu      sync.Mutex
+	cancel  context.CancelFunc
 	running bool
 }
 
@@ -37,31 +38,33 @@ func (s *Session) Start() error {
 		return nil
 	}
 
-	// Create real-time session
-	session, err := etw.NewRealTimeSession(s.Name)
-	if err != nil {
-		return fmt.Errorf("failed to create ETW session: %w", err)
-	}
-	s.Session = session
+	// Create real-time session (no error return)
+	session := etw.NewRealTimeSession(s.Name)
 
 	// Subscribe to "Microsoft-Windows-Kernel-Process"
 	// Provider GUID: {22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716}
-	if err := s.Session.EnableProvider(etw.MustParseProviderGUID("{22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716}")); err != nil {
-		s.Session.Stop()
+	kernelProc := etw.MustParseProvider("{22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716}")
+	if err := session.EnableProvider(kernelProc); err != nil {
+		_ = session.Stop()
 		return fmt.Errorf("failed to enable kernel process provider: %w", err)
 	}
 
 	// Subscribe to "Microsoft-Windows-DNS-Client"
 	// Provider GUID: {1C95126E-7EEA-49A9-A3FE-A378B03DDB4D}
-	if err := s.Session.EnableProvider(etw.MustParseProviderGUID("{1C95126E-7EEA-49A9-A3FE-A378B03DDB4D}")); err != nil {
+	dnsClient := etw.MustParseProvider("{1C95126E-7EEA-49A9-A3FE-A378B03DDB4D}")
+	if err := session.EnableProvider(dnsClient); err != nil {
 		s.logger.Warn("failed to enable DNS provider", zap.Error(err))
 		// Don't fail completely just for DNS
 	}
 
+	s.Session = session
 	s.running = true
 
+	ctx, cancel := context.WithCancel(context.Background())
+	s.cancel = cancel
+
 	// Start processing loop in background
-	go s.processLoop()
+	go s.processLoop(ctx)
 
 	return nil
 }
@@ -75,6 +78,10 @@ func (s *Session) Stop() error {
 		return nil
 	}
 
+	if s.cancel != nil {
+		s.cancel()
+	}
+
 	if err := s.Session.Stop(); err != nil {
 		return err
 	}
@@ -83,16 +90,27 @@ func (s *Session) Stop() error {
 	return nil
 }
 
-func (s *Session) processLoop() {
-	c := etw.NewRealTimeConsumer(s.logger) // Assuming a wrapper function or using the library's consumer
-	defer c.Stop()
+func (s *Session) processLoop(ctx context.Context) {
+	consumer := etw.NewRealTimeConsumer(ctx).FromSessions(s.Session)
+	defer consumer.Stop()
 
-	// Connect consumer to session
-	// Note: Actual library usage might differ slightly based on version, simplified here
-	// In reality, we traverse events from s.Session.Events() channel if available, or use a callback
+	if err := consumer.Start(); err != nil {
+		s.logger.Error("ETW consumer failed to start", zap.Error(err))
+		return
+	}
 
-	// Stub implementation for compilation check
-	for s.running {
-		time.Sleep(1 * time.Second)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-consumer.Events:
+			if !ok {
+				return
+			}
+			s.logger.Debug("ETW event",
+				zap.String("provider", event.System.Provider.Name),
+				zap.Uint16("event_id", event.System.EventID),
+			)
+		}
 	}
 }
