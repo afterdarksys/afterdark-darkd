@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"net"
@@ -21,6 +22,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -51,8 +53,12 @@ type Config struct {
 	// MaxConnections limits concurrent connections
 	MaxConnections int
 
-	// TCPAddr is the TCP address to listen on (e.g. ":8080")
+	// TCPAddr is the TCP address to listen on (e.g. "127.0.0.1:8080")
 	TCPAddr string
+
+	// CertDir is the directory where the IPC TLS cert/key are stored.
+	// Auto-generated on first start when TCP mode is enabled.
+	CertDir string
 }
 
 // DefaultConfig returns the default IPC configuration
@@ -235,12 +241,34 @@ func (s *Server) createListener() (net.Listener, error) {
 	return s.createUnixListener()
 }
 
-// createTCPListener creates a TCP listener
+// createTCPListener creates a TLS-wrapped TCP listener.
+// The cert is auto-generated on first start and stored in CertDir.
 func (s *Server) createTCPListener() (net.Listener, error) {
-	listener, err := net.Listen("tcp", s.config.TCPAddr)
+	certDir := s.config.CertDir
+	if certDir == "" {
+		certDir = "/var/lib/afterdark/ipc-tls"
+	}
+
+	tlsCert, _, err := ensureServerCert(certDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to obtain IPC TLS cert: %w", err)
+	}
+
+	tlsCfg := &tls.Config{
+		Certificates: []tls.Certificate{*tlsCert},
+		MinVersion:   tls.VersionTLS13,
+	}
+
+	listener, err := tls.Listen("tcp", s.config.TCPAddr, tlsCfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen on TCP %s: %w", s.config.TCPAddr, err)
 	}
+
+	s.logger.Info("IPC TCP listener using TLS",
+		zap.String("addr", s.config.TCPAddr),
+		zap.String("cert_dir", certDir),
+	)
+
 	return listener, nil
 }
 
@@ -431,11 +459,20 @@ func generateSecureToken(length int) string {
 // Client Helper
 // ============================================================================
 
-// Dial connects to the IPC server
+// Dial connects to the IPC server.
+// For Unix sockets the OS enforces access via file permissions; insecure
+// transport is standard practice there. For TCP, TLS is used with the
+// auto-generated server cert as the trusted CA.
 func Dial(ctx context.Context, socketPath string) (*grpc.ClientConn, error) {
+	return DialWithCertDir(ctx, socketPath, "")
+}
+
+// DialWithCertDir connects to the IPC server, loading the TLS cert from
+// certDir when connecting over TCP. Pass an empty string to use the default.
+func DialWithCertDir(ctx context.Context, socketPath, certDir string) (*grpc.ClientConn, error) {
 	if socketPath == "" {
 		if runtime.GOOS == "windows" {
-			socketPath = "127.0.0.1:0" // Would need to discover actual port
+			socketPath = "127.0.0.1:0"
 		} else {
 			socketPath = DefaultSocketPath
 		}
@@ -444,15 +481,25 @@ func Dial(ctx context.Context, socketPath string) (*grpc.ClientConn, error) {
 	var target string
 	var opts []grpc.DialOption
 
-	if runtime.GOOS == "windows" {
+	isTCP := runtime.GOOS == "windows" || (len(socketPath) > 0 && socketPath[0] != '/')
+
+	if isTCP {
 		target = socketPath
-		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if certDir == "" {
+			certDir = "/var/lib/afterdark/ipc-tls"
+		}
+		tlsCfg, err := loadClientTLSConfig(certDir)
+		if err != nil {
+			// Cert not found — daemon may not have started with TCP mode yet.
+			return nil, fmt.Errorf("IPC TLS cert not found in %s (is the daemon running in TCP mode?): %w", certDir, err)
+		}
+		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
 	} else {
 		target = "unix://" + socketPath
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	}
 
-	return grpc.DialContext(ctx, target, opts...)
+	return grpc.DialContext(ctx, target, opts...) //nolint:staticcheck
 }
 
 // NewClient creates a new IPC client
