@@ -13,6 +13,7 @@ import (
 	"github.com/afterdarksys/afterdark-darkd/internal/models"
 	"github.com/afterdarksys/afterdark-darkd/internal/plugin"
 	"github.com/afterdarksys/afterdark-darkd/internal/service"
+	"github.com/afterdarksys/afterdark-darkd/internal/web"
 	"github.com/afterdarksys/afterdark-darkd/pkg/logging"
 	"go.uber.org/zap"
 )
@@ -65,6 +66,9 @@ type Daemon struct {
 
 	// IPC Server
 	ipcServer *ipc.Server
+
+	// Admin web UI
+	webServer *web.Server
 }
 
 // New creates a new daemon instance
@@ -105,6 +109,7 @@ func New(cfg *models.Config) (*Daemon, error) {
 		logger:     logger,
 		pluginHost: pluginHost,
 		ipcServer:  ipcServer,
+		webServer:  web.New(registry, logger),
 		shutdownCh: make(chan struct{}),
 		doneCh:     make(chan struct{}),
 		pidFile:    cfg.Daemon.PIDFile,
@@ -170,6 +175,14 @@ func (d *Daemon) Start(ctx context.Context) error {
 		d.logger.Warn("failed to start some plugin services", zap.Error(err))
 	}
 
+	// Start admin web UI
+	if err := d.webServer.Start(ctx); err != nil {
+		d.logger.Warn("failed to start admin web UI", zap.Error(err))
+		// Non-fatal — daemon continues without the web UI
+	} else {
+		d.logger.Info("admin web UI started", zap.String("url", d.webServer.Addr()))
+	}
+
 	// Start IPC server (gRPC)
 	if err := d.ipcServer.Start(ctx); err != nil {
 		d.logger.Error("failed to start IPC server", zap.Error(err))
@@ -198,6 +211,13 @@ func (d *Daemon) Stop(ctx context.Context) error {
 
 	// Signal shutdown
 	close(d.shutdownCh)
+
+	// Stop admin web UI
+	if d.webServer != nil {
+		if err := d.webServer.Stop(ctx); err != nil {
+			d.logger.Error("error stopping admin web UI", zap.Error(err))
+		}
+	}
 
 	// Stop IPC server
 	if d.ipcServer != nil {

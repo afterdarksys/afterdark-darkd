@@ -4,7 +4,10 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"net/http"
 	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -248,5 +251,46 @@ func handleConsoleCommand(cmd string) {
 		}
 	default:
 		fmt.Printf("Unknown command: %s (type 'help' for commands)\n", parts[0])
+	}
+}
+
+func uiCmd() *cobra.Command {
+	const uiAddr = "http://127.0.0.1:7734"
+
+	return &cobra.Command{
+		Use:   "ui",
+		Short: "Open the admin web UI in a browser",
+		Long: `Open the AfterDark darkd admin web UI.
+
+The daemon serves the UI at ` + uiAddr + ` when running.
+Pages: Status, Patches, Threats, Services, Account.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// Verify the UI is reachable before launching a browser
+			resp, err := http.Get(uiAddr)
+			if err != nil {
+				return fmt.Errorf("admin UI is not reachable at %s — is the daemon running?", uiAddr)
+			}
+			resp.Body.Close()
+
+			fmt.Printf("Opening %s\n", uiAddr)
+
+			var openCmd *exec.Cmd
+			switch runtime.GOOS {
+			case "darwin":
+				openCmd = exec.Command("open", uiAddr)
+			case "linux":
+				openCmd = exec.Command("xdg-open", uiAddr)
+			case "windows":
+				openCmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", uiAddr)
+			default:
+				fmt.Printf("Open your browser at: %s\n", uiAddr)
+				return nil
+			}
+
+			if err := openCmd.Start(); err != nil {
+				fmt.Printf("Could not open browser automatically.\nOpen manually: %s\n", uiAddr)
+			}
+			return nil
+		},
 	}
 }

@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AfterDark Darkd — Admin</title>
+<style>
+  :root {
+    --bg:       #0d1117;
+    --surface:  #161b22;
+    --border:   #30363d;
+    --text:     #e6edf3;
+    --muted:    #8b949e;
+    --accent:   #58a6ff;
+    --green:    #3fb950;
+    --yellow:   #d29922;
+    --red:      #f85149;
+    --orange:   #e3b341;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; }
+
+  /* Nav */
+  nav { background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 24px; height: 52px; gap: 4px; }
+  .brand { font-weight: 700; font-size: 15px; color: var(--text); margin-right: 24px; letter-spacing: -0.3px; }
+  .brand span { color: var(--accent); }
+  .tab { padding: 6px 14px; border-radius: 6px; cursor: pointer; color: var(--muted); font-size: 13px; border: none; background: none; transition: background .15s, color .15s; }
+  .tab:hover { background: rgba(255,255,255,.06); color: var(--text); }
+  .tab.active { background: rgba(88,166,255,.12); color: var(--accent); }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); margin-left: auto; box-shadow: 0 0 6px var(--green); }
+
+  /* Layout */
+  main { padding: 28px 32px; max-width: 1200px; }
+  .page { display: none; }
+  .page.active { display: block; }
+  h2 { font-size: 20px; font-weight: 600; margin-bottom: 20px; }
+  h3 { font-size: 14px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 12px; }
+
+  /* Cards */
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; margin-bottom: 28px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; }
+  .card .label { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+  .card .value { font-size: 28px; font-weight: 700; }
+  .card .sub { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .card.ok .value { color: var(--green); }
+  .card.warn .value { color: var(--yellow); }
+  .card.crit .value { color: var(--red); }
+  .card.info .value { color: var(--accent); }
+
+  /* Table */
+  .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 24px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { background: var(--bg); color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; padding: 10px 16px; text-align: left; }
+  td { padding: 10px 16px; border-top: 1px solid var(--border); vertical-align: middle; }
+  tr:hover td { background: rgba(255,255,255,.02); }
+
+  /* Badges */
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+  .badge.green { background: rgba(63,185,80,.15); color: var(--green); }
+  .badge.yellow { background: rgba(210,153,34,.15); color: var(--yellow); }
+  .badge.red { background: rgba(248,81,73,.15); color: var(--red); }
+  .badge.blue { background: rgba(88,166,255,.15); color: var(--accent); }
+  .badge.gray { background: rgba(139,148,158,.15); color: var(--muted); }
+
+  /* KV rows */
+  .kv { display: grid; grid-template-columns: 180px 1fr; gap: 10px 0; margin-bottom: 6px; }
+  .kv dt { color: var(--muted); font-size: 13px; }
+  .kv dd { font-size: 13px; word-break: break-all; }
+
+  /* Loader */
+  .loading { color: var(--muted); padding: 40px; text-align: center; }
+  .error-msg { color: var(--red); padding: 16px; }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="brand">After<span>Dark</span> &mdash; darkd</div>
+  <button class="tab active" onclick="show('status')">Status</button>
+  <button class="tab" onclick="show('patches')">Patches</button>
+  <button class="tab" onclick="show('threats')">Threats</button>
+  <button class="tab" onclick="show('health')">Services</button>
+  <button class="tab" onclick="show('account')">Account</button>
+  <div class="status-dot" id="dot" title="Daemon running"></div>
+</nav>
+
+<main>
+
+<!-- STATUS -->
+<div class="page active" id="page-status">
+  <h2>System Status</h2>
+  <div class="cards" id="status-cards"><div class="loading">Loading...</div></div>
+  <h3>Identity</h3>
+  <div class="table-wrap" style="padding:16px">
+    <dl class="kv" id="identity-kv"><div class="loading">Loading...</div></dl>
+  </div>
+</div>
+
+<!-- PATCHES -->
+<div class="page" id="page-patches">
+  <h2>Patch Compliance</h2>
+  <div class="cards" id="patch-cards"><div class="loading">Loading...</div></div>
+  <h3>Urgent Actions</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Patch</th><th>Severity</th><th>Due By</th><th>Urgency (days)</th><th>Reason</th></tr></thead>
+      <tbody id="urgent-tbody"><tr><td colspan="5" class="loading">Loading...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- THREATS -->
+<div class="page" id="page-threats">
+  <h2>Threat Intelligence</h2>
+  <div class="cards" id="threat-cards"><div class="loading">Loading...</div></div>
+</div>
+
+<!-- HEALTH -->
+<div class="page" id="page-health">
+  <h2>Services</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Service</th><th>Status</th><th>Message</th></tr></thead>
+      <tbody id="health-tbody"><tr><td colspan="3" class="loading">Loading...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ACCOUNT -->
+<div class="page" id="page-account">
+  <h2>Account</h2>
+  <div class="table-wrap" style="padding:20px">
+    <dl class="kv" id="account-kv"><div class="loading">Loading...</div></dl>
+  </div>
+</div>
+
+</main>
+
+<script>
+const pages = ['status','patches','threats','health','account'];
+let currentPage = 'status';
+
+function show(page) {
+  pages.forEach(p => {
+    document.getElementById('page-' + p).classList.toggle('active', p === page);
+    document.querySelectorAll('.tab')[pages.indexOf(p)].classList.toggle('active', p === page);
+  });
+  currentPage = page;
+  load(page);
+}
+
+async function api(path) {
+  const r = await fetch('/api/' + path);
+  if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+  return r.json();
+}
+
+function badge(text, cls) {
+  return `<span class="badge ${cls}">${text}</span>`;
+}
+
+function fmtTime(t) {
+  if (!t) return '—';
+  const d = new Date(t);
+  if (isNaN(d)) return t;
+  return d.toLocaleString();
+}
+
+// STATUS
+async function loadStatus() {
+  const cards = document.getElementById('status-cards');
+  const kv = document.getElementById('identity-kv');
+  try {
+    const d = await api('status');
+    cards.innerHTML = `
+      <div class="card ok"><div class="label">Daemon</div><div class="value">${d.daemon}</div><div class="sub">v${d.version}</div></div>
+      <div class="card ${d.registered ? 'ok' : 'warn'}"><div class="label">Registration</div><div class="value">${d.registered ? 'Registered' : 'Unregistered'}</div><div class="sub">${d.registered ? 'Account linked' : 'Run darkdadm login'}</div></div>
+      <div class="card info"><div class="label">OS</div><div class="value" style="font-size:18px">${d.os || '—'}</div><div class="sub">${d.arch || ''}</div></div>
+    `;
+    kv.innerHTML = `
+      <dt>Hostname</dt><dd>${d.hostname || '—'}</dd>
+      <dt>System ID</dt><dd>${d.system_id || '—'}</dd>
+      <dt>OS / Arch</dt><dd>${d.os || '—'} / ${d.arch || '—'}</dd>
+      <dt>Version</dt><dd>${d.version}</dd>
+      <dt>Since</dt><dd>${fmtTime(d.since)}</dd>
+    `;
+  } catch(e) {
+    cards.innerHTML = `<div class="error-msg">Error: ${e.message}</div>`;
+    kv.innerHTML = '';
+  }
+}
+
+// PATCHES
+async function loadPatches() {
+  const cards = document.getElementById('patch-cards');
+  const tbody = document.getElementById('urgent-tbody');
+  try {
+    const d = await api('patches');
+    if (d.error) { cards.innerHTML = `<div class="error-msg">${d.error}</div>`; return; }
+    const cls = d.compliant ? 'ok' : (d.critical_missing > 0 ? 'crit' : 'warn');
+    cards.innerHTML = `
+      <div class="card ${cls}"><div class="label">Compliance</div><div class="value">${d.compliant ? 'Compliant' : 'Non-Compliant'}</div><div class="sub">Last scan: ${fmtTime(d.last_scan)}</div></div>
+      <div class="card ${d.critical_missing > 0 ? 'crit' : 'ok'}"><div class="label">Critical Missing</div><div class="value">${d.critical_missing}</div></div>
+      <div class="card ${d.important_missing > 0 ? 'warn' : 'ok'}"><div class="label">Important Missing</div><div class="value">${d.important_missing}</div></div>
+      <div class="card info"><div class="label">Total Missing</div><div class="value">${d.total_missing}</div></div>
+    `;
+    const actions = d.urgent_actions || [];
+    if (actions.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" style="color:var(--muted);text-align:center;padding:20px">No urgent actions</td></tr>';
+      return;
+    }
+    tbody.innerHTML = actions.map(a => {
+      const sev = (a.patch.severity || '').toLowerCase();
+      const sevCls = sev.includes('critical') ? 'red' : sev.includes('important') ? 'yellow' : 'blue';
+      return `<tr>
+        <td>${a.patch.title || a.patch.id || '—'}</td>
+        <td>${badge(a.patch.severity || '—', sevCls)}</td>
+        <td>${fmtTime(a.due_by)}</td>
+        <td>${a.urgency_days}</td>
+        <td>${a.reason}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) {
+    cards.innerHTML = `<div class="error-msg">Error: ${e.message}</div>`;
+    tbody.innerHTML = '';
+  }
+}
+
+// THREATS
+async function loadThreats() {
+  const cards = document.getElementById('threat-cards');
+  try {
+    const d = await api('threats');
+    if (d.error) { cards.innerHTML = `<div class="error-msg">${d.error}</div>`; return; }
+    cards.innerHTML = `
+      <div class="card info"><div class="label">Bad Domains</div><div class="value">${d.domain_count}</div></div>
+      <div class="card info"><div class="label">Bad IPs</div><div class="value">${d.ip_count}</div></div>
+      <div class="card ok"><div class="label">Last Sync</div><div class="value" style="font-size:16px">${fmtTime(d.last_sync)}</div></div>
+    `;
+  } catch(e) {
+    cards.innerHTML = `<div class="error-msg">Error: ${e.message}</div>`;
+  }
+}
+
+// HEALTH
+async function loadHealth() {
+  const tbody = document.getElementById('health-tbody');
+  try {
+    const d = await api('health');
+    const rows = Object.entries(d).sort((a,b) => a[0].localeCompare(b[0]));
+    if (rows.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3" style="color:var(--muted);text-align:center;padding:20px">No services</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(([name, svc]) => {
+      const status = (svc.status || 'unknown').toLowerCase();
+      const cls = status === 'healthy' ? 'green' : status === 'degraded' ? 'yellow' : 'red';
+      return `<tr><td>${name}</td><td>${badge(svc.status || 'unknown', cls)}</td><td style="color:var(--muted)">${svc.message || ''}</td></tr>`;
+    }).join('');
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="3" class="error-msg">Error: ${e.message}</td></tr>`;
+  }
+}
+
+// ACCOUNT
+async function loadAccount() {
+  const kv = document.getElementById('account-kv');
+  try {
+    const d = await api('account');
+    if (!d.registered) {
+      kv.innerHTML = `<dt style="color:var(--muted);grid-column:1/-1">Not registered. Run <code>darkdadm login</code> to link this system to your account.</dt>`;
+      return;
+    }
+    kv.innerHTML = `
+      <dt>Status</dt><dd>${badge('Registered', 'green')}</dd>
+      <dt>Email</dt><dd>${d.account_email || '—'}</dd>
+      <dt>Account ID</dt><dd>${d.account_id || '—'}</dd>
+      <dt>User ID</dt><dd>${d.user_id || '—'}</dd>
+      <dt>System ID</dt><dd>${d.system_id || '—'}</dd>
+      <dt>Hostname</dt><dd>${d.hostname || '—'}</dd>
+      <dt>OS / Arch</dt><dd>${d.os || '—'} / ${d.arch || '—'}</dd>
+      <dt>API Key</dt><dd style="font-family:monospace">${d.api_key || '—'}</dd>
+      <dt>Registered At</dt><dd>${fmtTime(d.registered_at)}</dd>
+    `;
+  } catch(e) {
+    kv.innerHTML = `<div class="error-msg">Error: ${e.message}</div>`;
+  }
+}
+
+function load(page) {
+  switch(page) {
+    case 'status':   loadStatus(); break;
+    case 'patches':  loadPatches(); break;
+    case 'threats':  loadThreats(); break;
+    case 'health':   loadHealth(); break;
+    case 'account':  loadAccount(); break;
+  }
+}
+
+// Initial load + auto-refresh every 30s
+load('status');
+setInterval(() => load(currentPage), 30000);
+</script>
+</body>
+</html>

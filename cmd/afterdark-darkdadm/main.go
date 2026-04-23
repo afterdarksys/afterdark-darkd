@@ -76,6 +76,7 @@ Use 'darkdadm api' for direct API operations.`,
 	rootCmd.AddCommand(deviceCmd())
 	rootCmd.AddCommand(policyCmd())
 	rootCmd.AddCommand(consoleCmd())
+	rootCmd.AddCommand(uiCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
