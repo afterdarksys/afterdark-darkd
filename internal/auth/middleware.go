@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -345,25 +346,28 @@ func extractAPIKey(r *http.Request) string {
 	return r.Header.Get("X-API-Key")
 }
 
+// getClientIP returns the real client IP. X-Forwarded-For and X-Real-IP are
+// only trusted when the immediate connection comes from a loopback address
+// (i.e. a local reverse proxy). Spoofed headers from direct clients are ignored.
 func getClientIP(r *http.Request) string {
-	// Check X-Forwarded-For header
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		parts := strings.Split(xff, ",")
-		return strings.TrimSpace(parts[0])
+	remoteHost, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		remoteHost = r.RemoteAddr
 	}
 
-	// Check X-Real-IP header
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
+	remoteIP := net.ParseIP(remoteHost)
+	fromTrustedProxy := remoteIP != nil && remoteIP.IsLoopback()
+
+	if fromTrustedProxy {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			return strings.TrimSpace(strings.SplitN(xff, ",", 2)[0])
+		}
+		if xri := r.Header.Get("X-Real-IP"); xri != "" {
+			return xri
+		}
 	}
 
-	// Fall back to RemoteAddr
-	parts := strings.Split(r.RemoteAddr, ":")
-	if len(parts) > 0 {
-		return parts[0]
-	}
-
-	return r.RemoteAddr
+	return remoteHost
 }
 
 func stringOrEmpty(s *string) string {

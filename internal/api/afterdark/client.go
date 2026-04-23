@@ -2,6 +2,7 @@ package afterdark
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 	"time"
 
@@ -185,9 +186,12 @@ func (c *Client) SubmitDetonationReports(ctx context.Context, reports []Detonati
 	return c.client.Post(ctx, "/v1/detonation/reports", payload, nil)
 }
 
-// SubmitDetonationReportsRaw uploads raw JSON detonation reports
+// SubmitDetonationReportsRaw uploads raw JSON detonation reports.
+// data must be a valid JSON value. It is passed through as-is rather than
+// re-encoded, preventing the double-encode bug that occurs when []byte is
+// passed to json.Marshal (which would base64-encode it instead).
 func (c *Client) SubmitDetonationReportsRaw(ctx context.Context, data []byte) error {
-	return c.client.Post(ctx, "/v1/detonation/reports", data, nil)
+	return c.client.Post(ctx, "/v1/detonation/reports", json.RawMessage(data), nil)
 }
 
 // GetSampleReputation queries the reputation of a file hash
