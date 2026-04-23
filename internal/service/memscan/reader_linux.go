@@ -241,15 +241,11 @@ func (r *LinuxReader) ReadMemory(pid int, address uint64, size uint64) ([]byte, 
 func (r *LinuxReader) ReadMemoryVM(pid int, address uint64, size uint64) ([]byte, error) {
 	data := make([]byte, size)
 
-	localIov := syscall.Iovec{
-		Base: &data[0],
-		Len:  uint64(size),
-	}
+	localIov := syscall.Iovec{Base: &data[0]}
+	localIov.SetLen(int(size))
 
-	remoteIov := syscall.Iovec{
-		Base: (*byte)(nil), // Will be set via unsafe
-		Len:  uint64(size),
-	}
+	remoteIov := syscall.Iovec{Base: (*byte)(nil)} // Base set via unsafe in a full impl
+	remoteIov.SetLen(int(size))
 	// Note: Setting remoteIov.Base to address requires unsafe pointer conversion
 	// For simplicity, using the file-based method above
 
