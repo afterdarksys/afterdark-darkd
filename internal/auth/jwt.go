@@ -154,6 +154,22 @@ func (s *JWTService) ValidateToken(tokenString string) (*JWTClaims, error) {
 		return nil, fmt.Errorf("%w: invalid issuer", ErrInvalidClaims)
 	}
 
+	// Validate audience
+	if len(s.config.AllowedAudience) > 0 {
+		validAudience := false
+		for _, allowed := range s.config.AllowedAudience {
+			for _, got := range claims.Audience {
+				if got == allowed {
+					validAudience = true
+					break
+				}
+			}
+		}
+		if !validAudience {
+			return nil, fmt.Errorf("%w: invalid audience", ErrInvalidClaims)
+		}
+	}
+
 	return claims, nil
 }
 
@@ -181,18 +197,21 @@ func (s *JWTService) GetTokenExpiry(tokenString string) (time.Time, error) {
 	if err != nil && !errors.Is(err, ErrExpiredToken) {
 		return time.Time{}, err
 	}
-
-	if claims != nil && claims.ExpiresAt != nil {
-		return claims.ExpiresAt.Time, nil
+	if claims == nil {
+		return time.Time{}, err
 	}
-
-	return time.Time{}, ErrInvalidClaims
+	if claims.ExpiresAt == nil {
+		return time.Time{}, fmt.Errorf("token has no expiry")
+	}
+	return claims.ExpiresAt.Time, err // return err (may be ErrExpiredToken) alongside the time
 }
 
 // generateTokenID creates a unique token identifier
 func generateTokenID() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("crypto/rand.Read failed: %v", err))
+	}
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 

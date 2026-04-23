@@ -119,13 +119,15 @@ func (c *Client) Delete(ctx context.Context, path string, result interface{}) er
 }
 
 func (c *Client) doRequest(ctx context.Context, method, path string, body, result interface{}) error {
-	var bodyReader io.Reader
+	// FIX 3A: marshal once outside the loop; recreate the reader inside each iteration
+	// so retries don't send an exhausted bytes.Reader.
+	var jsonBody []byte
 	if body != nil {
-		jsonBody, err := json.Marshal(body)
+		var err error
+		jsonBody, err = json.Marshal(body)
 		if err != nil {
 			return fmt.Errorf("failed to marshal request body: %w", err)
 		}
-		bodyReader = bytes.NewReader(jsonBody)
 	}
 
 	url := c.baseURL + path
@@ -143,6 +145,12 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body, resul
 				return ctx.Err()
 			case <-time.After(wait):
 			}
+		}
+
+		// FIX 3A: fresh reader on every attempt
+		var bodyReader io.Reader
+		if jsonBody != nil {
+			bodyReader = bytes.NewReader(jsonBody)
 		}
 
 		req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
@@ -166,13 +174,13 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body, resul
 			continue
 		}
 
-		defer resp.Body.Close()
-
 		// Update rate limits from headers
 		c.updateRateLimits(resp)
 
-		// Handle response
+		// FIX 3B: read then explicitly close/drain — no defer inside a loop
 		respBody, err := io.ReadAll(resp.Body)
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
 		if err != nil {
 			lastErr = fmt.Errorf("failed to read response: %w", err)
 			continue

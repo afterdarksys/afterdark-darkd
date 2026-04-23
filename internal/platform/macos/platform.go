@@ -4,8 +4,15 @@ package macos
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"os"
+	"os/exec"
 	"runtime"
+	"strings"
+	"time"
 
 	"github.com/afterdarksys/afterdark-darkd/internal/platform"
 	"golang.org/x/sys/unix"
@@ -97,44 +104,103 @@ func (p *Platform) GetHostname() (string, error) {
 	return os.Hostname()
 }
 
-// GetNetworkInterfaces returns network interfaces
+// GetNetworkInterfaces returns network interfaces using net.Interfaces()
 func (p *Platform) GetNetworkInterfaces() ([]platform.NetworkInterface, error) {
-	// Use ifconfig or networksetup
-	// This is a stub implementation
-	return []platform.NetworkInterface{}, nil
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+	var result []platform.NetworkInterface
+	for _, iface := range ifaces {
+		ni := platform.NetworkInterface{
+			Name:       iface.Name,
+			MACAddress: iface.HardwareAddr.String(),
+			Status:     iface.Flags.String(),
+		}
+		addrs, _ := iface.Addrs()
+		if len(addrs) > 0 {
+			ni.IPAddress = addrs[0].String()
+		}
+		result = append(result, ni)
+	}
+	return result, nil
 }
 
-// GetPublicIP returns the public IP address
+// GetPublicIP returns the public IP address by querying an external service
 func (p *Platform) GetPublicIP(ctx context.Context) (string, error) {
-	// Query external service for public IP
-	// This is a stub implementation
-	return "", nil
+	client := &http.Client{Timeout: 5 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.ipify.org", nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(body)), nil
 }
 
-// SetDNSServers configures DNS servers
+// SetDNSServers configures DNS servers using networksetup
 func (p *Platform) SetDNSServers(servers []string) error {
-	// Use networksetup -setdnsservers
-	// This is a stub implementation
+	// Discover active network service names via networksetup -listallnetworkservices
+	out, err := exec.CommandContext(context.Background(), "networksetup", "-listallnetworkservices").Output()
+	if err != nil {
+		return fmt.Errorf("networksetup -listallnetworkservices: %w", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	var lastErr error
+	applied := 0
+	for _, svc := range lines {
+		svc = strings.TrimSpace(svc)
+		if svc == "" || strings.HasPrefix(svc, "*") || strings.Contains(svc, "network services") {
+			continue
+		}
+		args := append([]string{"-setdnsservers", svc}, servers...)
+		if err := exec.CommandContext(context.Background(), "networksetup", args...).Run(); err == nil {
+			applied++
+		} else {
+			lastErr = err
+		}
+	}
+	if applied == 0 && lastErr != nil {
+		return fmt.Errorf("failed to set DNS on any interface: %w", lastErr)
+	}
 	return nil
 }
 
-// EnableFirewall enables the macOS firewall
+// EnableFirewall enables the macOS application firewall
 func (p *Platform) EnableFirewall() error {
-	// Use socketfilterfw
-	// This is a stub implementation
-	return nil
+	return exec.CommandContext(context.Background(),
+		"/usr/libexec/ApplicationFirewall/socketfilterfw", "--setglobalstate", "on").Run()
 }
 
-// DisableICMP enables/disables ICMP responses
+// DisableICMP controls ICMP redirect responses via sysctl.
+// When enabled is true, ICMP redirects are dropped (hardening on).
+// When enabled is false, the sysctl is restored to the default permissive value.
 func (p *Platform) DisableICMP(enabled bool) error {
-	// Use sysctl or pfctl
-	// This is a stub implementation
-	return nil
+	value := "1"
+	if !enabled {
+		value = "0"
+	}
+	return exec.CommandContext(context.Background(),
+		"sysctl", "-w", fmt.Sprintf("net.inet.icmp.drop_redirect=%s", value)).Run()
 }
 
-// BlockIPFragmentation enables/disables IP fragmentation
+// BlockIPFragmentation controls IP fragmentation via pfctl.
+// When enabled is true, a pf rule is loaded to block non-SYN TCP/UDP fragments.
+// When enabled is false, the anchor rule is flushed.
 func (p *Platform) BlockIPFragmentation(enabled bool) error {
-	// Use pfctl
-	// This is a stub implementation
-	return nil
+	if !enabled {
+		return exec.CommandContext(context.Background(),
+			"pfctl", "-a", "afterdark/frag", "-F", "rules").Run()
+	}
+	rule := "block in quick on any proto { tcp udp } from any to any flags !SF/SFRA\n"
+	cmd := exec.CommandContext(context.Background(), "pfctl", "-a", "afterdark/frag", "-f", "-")
+	cmd.Stdin = strings.NewReader(rule)
+	return cmd.Run()
 }

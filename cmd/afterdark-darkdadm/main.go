@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -118,16 +117,21 @@ After login, this system will be registered to your account.`,
 				fmt.Printf("System ID: %s\n\n", id.SystemID)
 			}
 
-			// Token-based auth
+			// Token-based auth (API key supplied directly)
 			if token != "" {
 				fmt.Println("Authenticating with API token...")
-				// TODO: Validate token with API
-				fmt.Println("Token validated successfully!")
-
+				id.APIKey = token
 				id.Registered = true
 				id.RegisteredAt = time.Now().Format(time.RFC3339)
 				if err := id.Save(); err != nil {
 					return fmt.Errorf("failed to save identity: %w", err)
+				}
+
+				fmt.Println("Registering device with DarkAPI...")
+				if err := registerDevice(token, id); err != nil {
+					fmt.Printf("Warning: device registration failed: %v\n", err)
+				} else {
+					fmt.Println("Device registered successfully.")
 				}
 
 				fmt.Println("\nSystem registered successfully!")
@@ -154,64 +158,39 @@ After login, this system will be registered to your account.`,
 
 			fmt.Println("Authenticating...")
 
-			// Construct request
-			loginReq := map[string]string{
-				"email":    email,
-				"password": password,
-			}
-			jsonBody, _ := json.Marshal(loginReq)
-
-			// Create HTTP client with timeout and (insecure for dev) transport
-			tr := &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // TODO: Use proper CA in production
-			}
-			client := &http.Client{
-				Timeout:   30 * time.Second,
-				Transport: tr,
-			}
-
-			// Call /api/v1/auth/login
-			resp, err := client.Post(fmt.Sprintf("%s/api/v1/auth/login", apiURL), "application/json", bytes.NewBuffer(jsonBody))
+			loginResult, err := loginToAPI(email, password)
 			if err != nil {
 				return fmt.Errorf("authentication failed: %w", err)
-			}
-			defer resp.Body.Close()
-
-			if resp.StatusCode != http.StatusOK {
-				return fmt.Errorf("login failed: status %d", resp.StatusCode)
-			}
-
-			// Parse response
-			var loginResp struct {
-				Token string `json:"token"`
-				User  struct {
-					ID       string `json:"user_id"`
-					Role     string `json:"role"`
-					Username string `json:"username"`
-				} `json:"user"`
-			}
-			if err := json.NewDecoder(resp.Body).Decode(&loginResp); err != nil {
-				return fmt.Errorf("failed to parse response: %w", err)
 			}
 
 			id.Registered = true
 			id.RegisteredAt = time.Now().Format(time.RFC3339)
 			id.AccountEmail = email
-			// Store the JWT token - reusing system_id file fields or ideally a new secrets file
-			// For this implementation valid within existing 'identity' package constraints:
-			// We might need to extend the Identity struct or save a separate token file.
-			// Saving to a separate creds file is better.
-			if err := saveCredentials(loginResp.Token); err != nil {
-				fmt.Printf("Warning: failed to save token: %v\n", err)
-			}
+			id.APIKey = loginResult.APIKey
+			id.AccountID = loginResult.AccountID
+			id.UserID = loginResult.UserID
 
 			if err := id.Save(); err != nil {
 				return fmt.Errorf("failed to save identity: %w", err)
 			}
 
+			// Also persist the JWT token to a separate credentials file for daemon use
+			if loginResult.Token != "" {
+				if err := saveCredentials(loginResult.Token); err != nil {
+					fmt.Printf("Warning: failed to save credentials token: %v\n", err)
+				}
+			}
+
+			fmt.Println("Registering device with DarkAPI...")
+			if err := registerDevice(loginResult.APIKey, id); err != nil {
+				fmt.Printf("Warning: device registration failed: %v\n", err)
+			} else {
+				fmt.Println("Device registered successfully.")
+			}
+
 			fmt.Println("\nLogin successful!")
-			fmt.Printf("Account: %s\n", email)
-			fmt.Printf("User ID: %s (%s)\n", loginResp.User.ID, loginResp.User.Role)
+			fmt.Printf("Account:   %s\n", email)
+			fmt.Printf("User ID:   %s\n", id.UserID)
 			fmt.Printf("System ID: %s\n", id.SystemID)
 			fmt.Println("\nThis system is now registered to your account.")
 
@@ -222,6 +201,138 @@ After login, this system will be registered to your account.`,
 	cmd.Flags().StringVarP(&email, "email", "e", "", "email address")
 	cmd.Flags().StringVarP(&password, "password", "p", "", "password (not recommended, use interactive prompt)")
 	cmd.Flags().StringVarP(&token, "token", "t", "", "API token for authentication")
+
+	return cmd
+}
+
+// loginRequest is the payload sent to the DarkAPI login endpoint.
+type loginRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+// loginResponse is the payload returned by the DarkAPI login endpoint.
+type loginResponse struct {
+	APIKey    string `json:"api_key"`
+	UserID    string `json:"user_id"`
+	AccountID string `json:"account_id"`
+	Token     string `json:"token"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+// loginToAPI posts credentials to DarkAPI and returns the login response.
+func loginToAPI(email, password string) (*loginResponse, error) {
+	payload, _ := json.Marshal(loginRequest{Email: email, Password: password})
+	client := &http.Client{Timeout: 15 * time.Second}
+	req, err := http.NewRequest("POST", "https://api.darkapi.io/v1/auth/login", bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "afterdark-darkdadm/0.1.0")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to DarkAPI: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 401 {
+		return nil, fmt.Errorf("invalid credentials")
+	}
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("API error: %d", resp.StatusCode)
+	}
+	var result loginResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("parsing response: %w", err)
+	}
+	return &result, nil
+}
+
+// registerDevice posts device metadata to DarkAPI after a successful login.
+func registerDevice(apiKey string, id *identity.SystemIdentity) error {
+	type deviceRegistration struct {
+		SystemID string `json:"system_id"`
+		Hostname string `json:"hostname"`
+		OS       string `json:"os"`
+		Arch     string `json:"arch"`
+		Version  string `json:"agent_version"`
+	}
+	payload, _ := json.Marshal(deviceRegistration{
+		SystemID: id.SystemID,
+		Hostname: id.Hostname,
+		OS:       id.OS,
+		Arch:     id.Arch,
+		Version:  "0.1.0",
+	})
+	client := &http.Client{Timeout: 15 * time.Second}
+	req, err := http.NewRequest("POST", "https://api.darkapi.io/v1/devices/register", bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", apiKey)
+	req.Header.Set("User-Agent", "afterdark-darkdadm/0.1.0")
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 && resp.StatusCode != 201 {
+		return fmt.Errorf("device registration failed: %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// saveCredentials persists a JWT/session token to a file alongside the identity.
+func saveCredentials(token string) error {
+	dir := identity.GetDataDir()
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("failed to create data directory: %w", err)
+	}
+	credPath := dir + "/credentials.token"
+	return os.WriteFile(credPath, []byte(token), 0600)
+}
+
+// registerCmd handles direct API-token-based registration (alias for login --token).
+func registerCmd() *cobra.Command {
+	var token string
+
+	cmd := &cobra.Command{
+		Use:   "register",
+		Short: "Register this system using an API token",
+		Long:  `Register this system with AfterDark using a pre-existing API token (MSP/automation use).`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if token == "" {
+				return fmt.Errorf("--token is required for register; use 'login' for interactive auth")
+			}
+
+			existing, _, err := identity.GetOrCreateIdentity()
+			if err != nil {
+				return fmt.Errorf("failed to load/create identity: %w", err)
+			}
+
+			existing.APIKey = token
+			existing.Registered = true
+			existing.RegisteredAt = time.Now().Format(time.RFC3339)
+			if err := existing.Save(); err != nil {
+				return fmt.Errorf("failed to save identity: %w", err)
+			}
+
+			fmt.Println("Registering device with DarkAPI...")
+			if err := registerDevice(token, existing); err != nil {
+				fmt.Printf("Warning: device registration failed: %v\n", err)
+			} else {
+				fmt.Println("Device registered successfully.")
+			}
+
+			fmt.Printf("System ID: %s\n", existing.SystemID)
+			fmt.Println("Registration complete.")
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVarP(&token, "token", "t", "", "API token for registration")
+	_ = cmd.MarkFlagRequired("token")
 
 	return cmd
 }
@@ -639,6 +750,37 @@ func configCmd() *cobra.Command {
 			value := args[1]
 			fmt.Printf("Setting %s = %s\n", key, value)
 			fmt.Println("(Configuration persistence not yet implemented)")
+			return nil
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "set-apikey <key>",
+		Short: "Set the DarkAPI API key directly (for MSP/automation)",
+		Long: `Set the DarkAPI API key without interactive login.
+Useful for MSP deployments and automated provisioning.
+
+Example:
+  darkdadm config set-apikey dk_abc123`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			apiKey := args[0]
+			if apiKey == "" {
+				return fmt.Errorf("API key cannot be empty")
+			}
+
+			existing, _, err := identity.GetOrCreateIdentity()
+			if err != nil {
+				return fmt.Errorf("failed to load/create identity: %w", err)
+			}
+
+			existing.APIKey = apiKey
+			if err := existing.Save(); err != nil {
+				return fmt.Errorf("failed to save identity: %w", err)
+			}
+
+			fmt.Println("API key saved successfully.")
+			fmt.Printf("System ID: %s\n", existing.SystemID)
 			return nil
 		},
 	})

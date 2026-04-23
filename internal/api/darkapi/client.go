@@ -2,6 +2,7 @@ package darkapi
 
 import (
 	"context"
+	"net/url"
 	"time"
 
 	"github.com/afterdarksys/afterdark-darkd/internal/api"
@@ -113,7 +114,7 @@ func (c *Client) GetBadIPsIncremental(ctx context.Context, since time.Time) (*Ba
 // LookupDomain checks if a domain is malicious
 func (c *Client) LookupDomain(ctx context.Context, domain string) (*ThreatInfo, error) {
 	var result ThreatInfo
-	if err := c.client.Get(ctx, "/v1/lookup/domain/"+domain, &result); err != nil {
+	if err := c.client.Get(ctx, "/v1/lookup/domain/"+url.PathEscape(domain), &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -122,7 +123,7 @@ func (c *Client) LookupDomain(ctx context.Context, domain string) (*ThreatInfo, 
 // LookupIP checks if an IP is malicious
 func (c *Client) LookupIP(ctx context.Context, ip string) (*ThreatInfo, error) {
 	var result ThreatInfo
-	if err := c.client.Get(ctx, "/v1/lookup/ip/"+ip, &result); err != nil {
+	if err := c.client.Get(ctx, "/v1/lookup/ip/"+url.PathEscape(ip), &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

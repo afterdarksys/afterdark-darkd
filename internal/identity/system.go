@@ -23,6 +23,11 @@ type SystemIdentity struct {
 	Registered   bool   `yaml:"registered" json:"registered"`
 	RegisteredAt string `yaml:"registered_at,omitempty" json:"registered_at,omitempty"`
 	AccountEmail string `yaml:"account_email,omitempty" json:"account_email,omitempty"`
+
+	// API credentials set after login
+	APIKey    string `yaml:"api_key,omitempty" json:"api_key,omitempty"`
+	AccountID string `yaml:"account_id,omitempty" json:"account_id,omitempty"`
+	UserID    string `yaml:"user_id,omitempty" json:"user_id,omitempty"`
 }
 
 const (

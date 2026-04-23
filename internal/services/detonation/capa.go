@@ -145,8 +145,16 @@ type CAPAAnalysisMeta struct {
 func (c *CAPAExecutor) Analyze(filePath string) (*CAPAResult, error) {
 	startTime := time.Now()
 
-	// Build command
-	args := []string{filePath, "-j"} // -j for JSON output
+	// Validate filePath to prevent flag/argument injection
+	if !filepath.IsAbs(filePath) {
+		return nil, fmt.Errorf("capa: filePath must be absolute: %s", filePath)
+	}
+	if _, err := os.Stat(filePath); err != nil {
+		return nil, fmt.Errorf("capa: file not accessible: %w", err)
+	}
+
+	// Build command — use "--" to prevent flag injection from filePath
+	args := []string{"--", filePath, "-j"} // -j for JSON output
 
 	if c.rulesDir != "" {
 		args = append(args, "-r", c.rulesDir)
@@ -303,7 +311,7 @@ func (c *CAPAExecutor) ExportToFile(result *CAPAResult, outputPath string) error
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	if err := os.WriteFile(outputPath, data, 0644); err != nil {
+	if err := os.WriteFile(outputPath, data, 0600); err != nil {
 		return fmt.Errorf("failed to write output file: %w", err)
 	}
 

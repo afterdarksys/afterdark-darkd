@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -434,9 +436,7 @@ func (s *AuthService) ChangePassword(ctx context.Context, userID, currentPasswor
 // Helper methods
 
 func (s *AuthService) findUserByEmail(ctx context.Context, email string) (*User, error) {
-	// For multi-tenant, we might need to search across tenants or require tenant context
-	// For now, assume we have tenant context or search all
-	return nil, ErrNotFound // Placeholder - implement based on requirements
+	return s.users.GetByEmail(ctx, "", email)
 }
 
 func (s *AuthService) getUserSiteIDs(ctx context.Context, userID string) ([]string, error) {
@@ -482,7 +482,6 @@ func (s *AuthService) logAuthFailure(ctx context.Context, tenantID, identifier, 
 
 // hashToken creates a hash of a token for storage
 func hashToken(token string) string {
-	// Use a simple hash for token storage
-	// In production, consider using SHA-256
-	return token // Placeholder - implement proper hashing
+	h := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(h[:])
 }

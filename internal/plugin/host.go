@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/hashicorp/go-hclog"
@@ -87,15 +88,36 @@ func (h *Host) DiscoverPlugins() ([]string, error) {
 		}
 
 		path := filepath.Join(h.pluginDir, entry.Name())
-		info, err := entry.Info()
+		info, err := os.Stat(path)
 		if err != nil {
 			continue
 		}
 
 		// Check if executable
-		if info.Mode()&0111 != 0 {
-			plugins = append(plugins, path)
+		if info.Mode()&0111 == 0 {
+			continue
 		}
+
+		// Reject world- or group-writable plugins
+		if info.Mode()&0022 != 0 {
+			h.logger.Warn("rejecting plugin with unsafe permissions",
+				zap.String("path", path),
+				zap.String("mode", info.Mode().String()),
+			)
+			continue
+		}
+
+		// Only execute plugins owned by root (uid 0)
+		if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+			if stat.Uid != 0 {
+				h.logger.Warn("rejecting plugin not owned by root",
+					zap.String("path", path),
+				)
+				continue
+			}
+		}
+
+		plugins = append(plugins, path)
 	}
 
 	return plugins, nil

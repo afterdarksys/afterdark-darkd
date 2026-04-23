@@ -50,7 +50,7 @@ func DefaultConfig() Config {
 
 // NewService creates a new behavior analysis service
 func NewService(cfg *models.Config, endpointID string, log *zap.Logger) (*Service, error) {
-	collector := behavior.NewCollector(cfg, endpointID)
+	collector := behavior.NewCollector(cfg, endpointID, log)
 
 	ctx, cancel := context.WithCancel(context.Background())
 

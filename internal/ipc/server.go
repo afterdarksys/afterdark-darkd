@@ -2,6 +2,9 @@ package ipc
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"os"
@@ -12,11 +15,14 @@ import (
 
 	pb "github.com/afterdarksys/afterdark-darkd/api/proto/ipc"
 	"github.com/afterdarksys/afterdark-darkd/internal/service"
+	"github.com/afterdarksys/afterdark-darkd/internal/service/patch"
+	"github.com/afterdarksys/afterdark-darkd/internal/service/threat"
 	"github.com/afterdarksys/afterdark-darkd/pkg/logging"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -395,22 +401,30 @@ func (s *Server) streamAuthInterceptor(
 
 // validateAuth validates the authentication token from context metadata
 func (s *Server) validateAuth(ctx context.Context) error {
-	// For now, we're permissive since we control socket permissions
-	// In production, you'd extract the token from gRPC metadata
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return status.Error(codes.Unauthenticated, "missing metadata")
+	}
+	tokens := md.Get("authorization")
+	if len(tokens) == 0 {
+		return status.Error(codes.Unauthenticated, "missing authorization token")
+	}
+	s.authMu.RLock()
+	expected := s.authToken
+	s.authMu.RUnlock()
+	if !hmac.Equal([]byte(tokens[0]), []byte("Bearer "+expected)) {
+		return status.Error(codes.Unauthenticated, "invalid authorization token")
+	}
 	return nil
 }
 
 // generateSecureToken generates a cryptographically secure token
 func generateSecureToken(length int) string {
-	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	b := make([]byte, length)
-
-	// Use crypto/rand in production
-	for i := range b {
-		b[i] = charset[i%len(charset)]
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("crypto/rand failed: %v", err))
 	}
-
-	return string(b)
+	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 // ============================================================================
@@ -459,18 +473,23 @@ func NewClient(ctx context.Context, socketPath string) (pb.DaemonServiceClient, 
 func (s *Server) GetStatus(ctx context.Context, req *pb.StatusRequest) (*pb.StatusResponse, error) {
 	hostname, _ := os.Hostname()
 
-	return &pb.StatusResponse{
+	// Determine state string based on whether registry has services
+	state := "running"
+
+	resp := &pb.StatusResponse{
 		Version:       "0.1.0",
 		Platform:      runtime.GOOS + "/" + runtime.GOARCH,
 		Hostname:      hostname,
 		UptimeSeconds: int64(time.Since(s.startedAt).Seconds()),
 		Pid:           int64(os.Getpid()),
-		State:         "running",
+		State:         state,
 		StartedAt: &pb.Timestamp{
 			Seconds: s.startedAt.Unix(),
 			Nanos:   int32(s.startedAt.Nanosecond()),
 		},
-	}, nil
+	}
+
+	return resp, nil
 }
 
 // GetHealth returns health status
@@ -511,7 +530,6 @@ func (s *Server) GetHealth(ctx context.Context, req *pb.HealthRequest) (*pb.Heal
 
 // GetCompliance returns patch compliance status
 func (s *Server) GetCompliance(ctx context.Context, req *pb.GetComplianceRequest) (*pb.ComplianceResponse, error) {
-	// Get patch service from registry
 	if s.registry == nil {
 		return nil, status.Error(codes.Unavailable, "service registry not available")
 	}
@@ -521,15 +539,20 @@ func (s *Server) GetCompliance(ctx context.Context, req *pb.GetComplianceRequest
 		return nil, status.Error(codes.Unavailable, "patch_monitor service not available")
 	}
 
-	// Type assert to get patch-specific methods
-	// This would need to be adapted based on actual service interface
+	patchSvc, ok := svc.(*patch.Service)
+	if !ok {
+		return nil, status.Error(codes.Internal, "patch_monitor service type mismatch")
+	}
+
+	c := patchSvc.GetComplianceStatus()
+
 	return &pb.ComplianceResponse{
-		Compliant:        true,
-		CriticalMissing:  0,
-		ImportantMissing: 0,
-		TotalMissing:     0,
-		LastScan:         &pb.Timestamp{Seconds: time.Now().Unix()},
-		NextScan:         &pb.Timestamp{Seconds: time.Now().Add(time.Hour).Unix()},
+		Compliant:        c.Compliant,
+		CriticalMissing:  int32(c.CriticalMissing),
+		ImportantMissing: int32(c.ImportantMissing),
+		TotalMissing:     int32(c.TotalMissing),
+		LastScan:         &pb.Timestamp{Seconds: c.LastScan.Unix()},
+		NextScan:         &pb.Timestamp{Seconds: c.NextScan.Unix()},
 	}, nil
 }
 
@@ -548,32 +571,90 @@ func (s *Server) TriggerScan(ctx context.Context, req *pb.TriggerScanRequest) (*
 		scanType = "patches"
 	}
 
+	scanID := fmt.Sprintf("scan-%d", time.Now().Unix())
+
+	if s.registry != nil {
+		switch scanType {
+		case "patches", "patch":
+			svc := s.registry.Get("patch_monitor")
+			if svc != nil {
+				if patchSvc, ok := svc.(*patch.Service); ok {
+					patchSvc.TriggerScan()
+				}
+			}
+		case "threats", "threat_intel":
+			svc := s.registry.Get("threat_intel")
+			if svc != nil {
+				if threatSvc, ok := svc.(*threat.Service); ok {
+					threatSvc.TriggerSync()
+				}
+			}
+		}
+	}
+
 	return &pb.ScanResponse{
 		Started: true,
-		ScanId:  fmt.Sprintf("scan-%d", time.Now().Unix()),
+		ScanId:  scanID,
 		Message: fmt.Sprintf("%s scan started", scanType),
 	}, nil
 }
 
 // GetThreatStatus returns threat intel status
 func (s *Server) GetThreatStatus(ctx context.Context, req *pb.GetThreatStatusRequest) (*pb.ThreatStatusResponse, error) {
+	if s.registry == nil {
+		return nil, status.Error(codes.Unavailable, "service registry not available")
+	}
+
+	svc := s.registry.Get("threat_intel")
+	if svc == nil {
+		return nil, status.Error(codes.Unavailable, "threat_intel service not available")
+	}
+
+	threatSvc, ok := svc.(*threat.Service)
+	if !ok {
+		return nil, status.Error(codes.Internal, "threat_intel service type mismatch")
+	}
+
+	stats := threatSvc.Stats()
+	lastSync := threatSvc.GetLastSync()
+	nextSync := lastSync.Add(6 * time.Hour)
+
 	return &pb.ThreatStatusResponse{
 		Enabled:         true,
-		BadDomainsCount: 0,
-		BadIpsCount:     0,
+		BadDomainsCount: int64(stats.DomainCount),
+		BadIpsCount:     int64(stats.IPCount),
 		CacheHitRate:    0.0,
 		LookupsTotal:    0,
 		ThreatsDetected: 0,
-		LastSync:        &pb.Timestamp{Seconds: time.Now().Unix()},
-		NextSync:        &pb.Timestamp{Seconds: time.Now().Add(6 * time.Hour).Unix()},
+		LastSync:        &pb.Timestamp{Seconds: lastSync.Unix()},
+		NextSync:        &pb.Timestamp{Seconds: nextSync.Unix()},
 	}, nil
 }
 
 // CheckDomain checks a domain against threat intel
 func (s *Server) CheckDomain(ctx context.Context, req *pb.CheckDomainRequest) (*pb.ThreatCheckResponse, error) {
+	domain := req.GetDomain()
+
+	if s.registry != nil {
+		svc := s.registry.Get("threat_intel")
+		if svc != nil {
+			if threatSvc, ok := svc.(*threat.Service); ok {
+				isMalicious, info := threatSvc.IsDomainMalicious(domain)
+				if isMalicious && info != nil {
+					return &pb.ThreatCheckResponse{
+						IsThreat:   true,
+						Indicator:  domain,
+						ThreatType: info.Type,
+						Confidence: 90,
+					}, nil
+				}
+			}
+		}
+	}
+
 	return &pb.ThreatCheckResponse{
 		IsThreat:   false,
-		Indicator:  req.GetDomain(),
+		Indicator:  domain,
 		ThreatType: "",
 		Confidence: 0,
 	}, nil
@@ -581,9 +662,28 @@ func (s *Server) CheckDomain(ctx context.Context, req *pb.CheckDomainRequest) (*
 
 // CheckIP checks an IP against threat intel
 func (s *Server) CheckIP(ctx context.Context, req *pb.CheckIPRequest) (*pb.ThreatCheckResponse, error) {
+	ip := req.GetIp()
+
+	if s.registry != nil {
+		svc := s.registry.Get("threat_intel")
+		if svc != nil {
+			if threatSvc, ok := svc.(*threat.Service); ok {
+				isMalicious, info := threatSvc.IsIPMalicious(ip)
+				if isMalicious && info != nil {
+					return &pb.ThreatCheckResponse{
+						IsThreat:   true,
+						Indicator:  ip,
+						ThreatType: info.Type,
+						Confidence: 90,
+					}, nil
+				}
+			}
+		}
+	}
+
 	return &pb.ThreatCheckResponse{
 		IsThreat:   false,
-		Indicator:  req.GetIp(),
+		Indicator:  ip,
 		ThreatType: "",
 		Confidence: 0,
 	}, nil

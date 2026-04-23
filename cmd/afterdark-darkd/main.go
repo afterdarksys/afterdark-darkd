@@ -835,6 +835,12 @@ func runDaemonWithContext(ctx context.Context) error {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
+	// If no DarkAPI key is set in config, fall back to the identity file's API key.
+	if cfg.API.DarkAPI.APIKey == "" && id != nil && id.APIKey != "" {
+		cfg.API.DarkAPI.APIKey = id.APIKey
+		logger.Info("using DarkAPI key from system identity")
+	}
+
 	// Check for API mode override
 	if os.Getenv("AFTERDARK_API_MODE") == "true" {
 		logger.Info("Starting in API-only mode")

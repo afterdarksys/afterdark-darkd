@@ -2,6 +2,7 @@ package afterdark
 
 import (
 	"context"
+	"net/url"
 	"time"
 
 	"github.com/afterdarksys/afterdark-darkd/internal/api"
@@ -79,7 +80,7 @@ type PatchReport struct {
 // GetPatchIntel retrieves patch intelligence data
 func (c *Client) GetPatchIntel(ctx context.Context, patchID string) (*PatchIntel, error) {
 	var result PatchIntel
-	if err := c.client.Get(ctx, "/v1/patches/intel/"+patchID, &result); err != nil {
+	if err := c.client.Get(ctx, "/v1/patches/intel/"+url.PathEscape(patchID), &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -125,7 +126,7 @@ func (c *Client) ReportTelemetry(ctx context.Context, report *TelemetryReport) e
 // GetEndpointStatus retrieves endpoint status
 func (c *Client) GetEndpointStatus(ctx context.Context, endpointID string) (*EndpointRegistration, error) {
 	var result EndpointRegistration
-	if err := c.client.Get(ctx, "/v1/endpoints/"+endpointID, &result); err != nil {
+	if err := c.client.Get(ctx, "/v1/endpoints/"+url.PathEscape(endpointID), &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -192,7 +193,7 @@ func (c *Client) SubmitDetonationReportsRaw(ctx context.Context, data []byte) er
 // GetSampleReputation queries the reputation of a file hash
 func (c *Client) GetSampleReputation(ctx context.Context, sha256 string) (*SampleReputation, error) {
 	var result SampleReputation
-	if err := c.client.Get(ctx, "/v1/reputation/"+sha256, &result); err != nil {
+	if err := c.client.Get(ctx, "/v1/reputation/"+url.PathEscape(sha256), &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

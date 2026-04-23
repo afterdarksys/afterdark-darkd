@@ -148,7 +148,11 @@ func (s *Sandbox) detonateDocker(ctx context.Context, sample *models.DetonationS
 	}
 
 	// Prepare Docker command with security restrictions
-	containerName := fmt.Sprintf("detonation-%s", sample.ID[:8])
+	idSuffix := sample.ID
+	if len(idSuffix) > 8 {
+		idSuffix = idSuffix[:8]
+	}
+	containerName := fmt.Sprintf("detonation-%s", idSuffix)
 
 	args := []string{
 		"run",

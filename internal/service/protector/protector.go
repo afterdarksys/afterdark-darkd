@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"sync"
 	"time"
 
@@ -180,15 +181,20 @@ func (s *Service) connect() error {
 
 	log.Printf("[Protector] Connecting to %s...", s.config.ProtectorURL)
 
-	// Build connection URL with auth
-	url := fmt.Sprintf("%s?client_id=%s&agent_id=%s&api_key=%s",
+	// Build URL without credentials
+	wsURL := fmt.Sprintf("%s?client_id=%s&agent_id=%s",
 		s.config.ProtectorURL,
 		s.config.ClientID,
 		s.config.AgentID,
-		s.config.APIKey,
 	)
+	// Pass API key as a header
+	opts := &websocket.DialOptions{
+		HTTPHeader: http.Header{
+			"X-API-Key": []string{s.config.APIKey},
+		},
+	}
 
-	conn, _, err := websocket.Dial(s.ctx, url, nil)
+	conn, _, err := websocket.Dial(s.ctx, wsURL, opts)
 	if err != nil {
 		return fmt.Errorf("dial failed: %w", err)
 	}

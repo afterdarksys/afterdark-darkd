@@ -251,9 +251,20 @@ func (m *Middleware) RequireSiteAccess(siteIDParam string) func(http.Handler) ht
 				requestedSite = r.PathValue(siteIDParam)
 			}
 
-			// If no site specified or user has tenant-wide access
-			if requestedSite == "" || len(subject.SiteIDs) == 0 {
+			// If no site specified in request, no restriction needed
+			if requestedSite == "" {
 				next.ServeHTTP(w, r)
+				return
+			}
+			// Check if user has explicit tenant-wide access via permission
+			if m.evaluator.HasPermission(subject.Permissions, "sites", "*") ||
+				m.evaluator.HasPermissionWithScope(subject.Permissions, "*", "*", ScopeTenant) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			// Empty SiteIDs means no site access configured — deny
+			if len(subject.SiteIDs) == 0 {
+				http.Error(w, "no site access configured", http.StatusForbidden)
 				return
 			}
 
@@ -331,13 +342,7 @@ func extractBearerToken(r *http.Request) string {
 }
 
 func extractAPIKey(r *http.Request) string {
-	// Check header first
-	if key := r.Header.Get("X-API-Key"); key != "" {
-		return key
-	}
-
-	// Check query parameter as fallback (less secure, for testing)
-	return r.URL.Query().Get("api_key")
+	return r.Header.Get("X-API-Key")
 }
 
 func getClientIP(r *http.Request) string {

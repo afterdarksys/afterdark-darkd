@@ -34,7 +34,7 @@ func DefaultPasswordConfig() *PasswordConfig {
 		RequireLower:   true,
 		RequireDigit:   true,
 		RequireSpecial: true,
-		BcryptCost:     bcrypt.DefaultCost,
+		BcryptCost:     12,
 	}
 }
 

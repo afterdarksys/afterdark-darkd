@@ -143,6 +143,14 @@ func (s *Service) executeScript(path string) {
 		s.logger.Info("starlark print", zap.String("script", thread.Name), zap.String("msg", msg))
 	}
 
+	// Snapshot globals under read lock to avoid data race with updateGlobals
+	s.mu.RLock()
+	globalsCopy := make(starlark.StringDict, len(s.globals))
+	for k, v := range s.globals {
+		globalsCopy[k] = v
+	}
+	s.mu.RUnlock()
+
 	// Resource limit: Cancel execution after timeout
 	const maxExecTime = 5 * time.Second
 	done := make(chan struct{})
@@ -150,7 +158,7 @@ func (s *Service) executeScript(path string) {
 
 	go func() {
 		defer close(done)
-		_, execErr = starlark.ExecFile(thread, path, nil, s.globals)
+		_, execErr = starlark.ExecFile(thread, path, nil, globalsCopy)
 	}()
 
 	select {
@@ -170,9 +178,8 @@ func (s *Service) executeScript(path string) {
 		return
 	}
 
-	s.mu.Lock()
-	s.threads[path] = thread
-	s.mu.Unlock()
+	// Note: threads are not stored — starlark.Thread is not reentrant and storing
+	// them serves no purpose while leaking memory.
 	s.logger.Info("loaded policy script", zap.String("script", path))
 }
 
