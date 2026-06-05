@@ -2,6 +2,7 @@ package ipc
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"net"
 	"os"
@@ -387,12 +388,12 @@ func (s *Server) validateAuth(ctx context.Context) error {
 func generateSecureToken(length int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	b := make([]byte, length)
-
-	// Use crypto/rand in production
-	for i := range b {
-		b[i] = charset[i%len(charset)]
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("crypto/rand failed: %v", err))
 	}
-
+	for i := range b {
+		b[i] = charset[b[i]%byte(len(charset))]
+	}
 	return string(b)
 }
 
@@ -469,7 +470,7 @@ func (s *Server) GetHealth(ctx context.Context, req *pb.HealthRequest) (*pb.Heal
 			health := svc.Health()
 			services[svc.Name()] = &pb.ServiceHealth{
 				Name:    svc.Name(),
-				Status:  string(health.Status),
+				Status:  health.Status.String(),
 				Message: health.Message,
 				LastCheck: &pb.Timestamp{
 					Seconds: health.LastCheck.Unix(),
@@ -604,7 +605,7 @@ func (s *Server) ListServices(ctx context.Context, req *pb.ListServicesRequest) 
 				Name:    svc.Name(),
 				Status:  "running",
 				Enabled: true,
-				Health:  string(health.Status),
+				Health:  health.Status.String(),
 			})
 		}
 	}
