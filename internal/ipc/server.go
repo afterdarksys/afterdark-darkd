@@ -15,6 +15,8 @@ import (
 
 	pb "github.com/afterdarksys/afterdark-darkd/api/proto/ipc"
 	"github.com/afterdarksys/afterdark-darkd/internal/service"
+	"github.com/afterdarksys/afterdark-darkd/internal/service/patch"
+	"github.com/afterdarksys/afterdark-darkd/internal/service/threat"
 	"github.com/afterdarksys/afterdark-darkd/pkg/logging"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -542,33 +544,63 @@ func (s *Server) GetHealth(ctx context.Context, req *pb.HealthRequest) (*pb.Heal
 
 // GetCompliance returns patch compliance status
 func (s *Server) GetCompliance(ctx context.Context, req *pb.GetComplianceRequest) (*pb.ComplianceResponse, error) {
-	// Get patch service from registry
 	if s.registry == nil {
-		return nil, status.Error(codes.Unavailable, "service registry not available")
+		return nil, status.Error(codes.Unavailable, "registry not available")
 	}
-
 	svc := s.registry.Get("patch_monitor")
 	if svc == nil {
-		return nil, status.Error(codes.Unavailable, "patch_monitor service not available")
+		return nil, status.Error(codes.Unavailable, "patch_monitor not available")
 	}
-
-	// Type assert to get patch-specific methods
-	// This would need to be adapted based on actual service interface
+	patchSvc, ok := svc.(patch.Interface)
+	if !ok {
+		return nil, status.Error(codes.Internal, "patch_monitor type assertion failed")
+	}
+	cs := patchSvc.GetComplianceStatus()
 	return &pb.ComplianceResponse{
-		Compliant:        true,
-		CriticalMissing:  0,
-		ImportantMissing: 0,
-		TotalMissing:     0,
-		LastScan:         &pb.Timestamp{Seconds: time.Now().Unix()},
-		NextScan:         &pb.Timestamp{Seconds: time.Now().Add(time.Hour).Unix()},
+		Compliant:        cs.Compliant,
+		CriticalMissing:  int32(cs.CriticalMissing),
+		ImportantMissing: int32(cs.ImportantMissing),
+		TotalMissing:     int32(cs.TotalMissing),
+		LastScan:         &pb.Timestamp{Seconds: cs.LastScan.Unix()},
+		NextScan:         &pb.Timestamp{Seconds: cs.NextScan.Unix()},
 	}, nil
 }
 
 // ListPatches returns patches
 func (s *Server) ListPatches(ctx context.Context, req *pb.ListPatchesRequest) (*pb.PatchListResponse, error) {
+	if s.registry == nil {
+		return nil, status.Error(codes.Unavailable, "registry not available")
+	}
+	svc := s.registry.Get("patch_monitor")
+	if svc == nil {
+		return nil, status.Error(codes.Unavailable, "patch_monitor not available")
+	}
+	patchSvc, ok := svc.(patch.Interface)
+	if !ok {
+		return nil, status.Error(codes.Internal, "patch_monitor type assertion failed")
+	}
+	missing := patchSvc.GetMissingPatches()
+	patches := make([]*pb.Patch, 0, len(missing))
+	for _, p := range missing {
+		pbp := &pb.Patch{
+			Id:          p.ID,
+			Name:        p.Name,
+			Description: p.Description,
+			Severity:    p.Severity.String(),
+			Category:    p.Category.String(),
+			ReleasedAt:  &pb.Timestamp{Seconds: p.ReleasedAt.Unix()},
+			Cves:        p.CVEs,
+			KbArticle:   p.KBArticle,
+			SizeBytes:   p.Size,
+		}
+		if p.InstalledAt != nil {
+			pbp.InstalledAt = &pb.Timestamp{Seconds: p.InstalledAt.Unix()}
+		}
+		patches = append(patches, pbp)
+	}
 	return &pb.PatchListResponse{
-		Patches:    []*pb.Patch{},
-		TotalCount: 0,
+		Patches:    patches,
+		TotalCount: int32(len(patches)),
 	}, nil
 }
 
@@ -577,6 +609,16 @@ func (s *Server) TriggerScan(ctx context.Context, req *pb.TriggerScanRequest) (*
 	scanType := req.GetScanType()
 	if scanType == "" {
 		scanType = "patches"
+	}
+
+	if scanType == "patches" || scanType == "" {
+		if s.registry != nil {
+			if svc := s.registry.Get("patch_monitor"); svc != nil {
+				if patchSvc, ok := svc.(patch.Interface); ok {
+					patchSvc.TriggerScan()
+				}
+			}
+		}
 	}
 
 	return &pb.ScanResponse{
@@ -588,54 +630,113 @@ func (s *Server) TriggerScan(ctx context.Context, req *pb.TriggerScanRequest) (*
 
 // GetThreatStatus returns threat intel status
 func (s *Server) GetThreatStatus(ctx context.Context, req *pb.GetThreatStatusRequest) (*pb.ThreatStatusResponse, error) {
+	if s.registry == nil {
+		return nil, status.Error(codes.Unavailable, "registry not available")
+	}
+	svc := s.registry.Get("threat_intel")
+	if svc == nil {
+		return nil, status.Error(codes.Unavailable, "threat_intel not available")
+	}
+	ts, ok := svc.(threat.Interface)
+	if !ok {
+		return nil, status.Error(codes.Internal, "threat_intel type assertion failed")
+	}
+	st := ts.Stats()
 	return &pb.ThreatStatusResponse{
 		Enabled:         true,
-		BadDomainsCount: 0,
-		BadIpsCount:     0,
-		CacheHitRate:    0.0,
-		LookupsTotal:    0,
-		ThreatsDetected: 0,
-		LastSync:        &pb.Timestamp{Seconds: time.Now().Unix()},
+		BadDomainsCount: int64(st.DomainCount),
+		BadIpsCount:     int64(st.IPCount),
+		LastSync:        &pb.Timestamp{Seconds: st.LastSync.Unix()},
 		NextSync:        &pb.Timestamp{Seconds: time.Now().Add(6 * time.Hour).Unix()},
 	}, nil
 }
 
 // CheckDomain checks a domain against threat intel
 func (s *Server) CheckDomain(ctx context.Context, req *pb.CheckDomainRequest) (*pb.ThreatCheckResponse, error) {
-	return &pb.ThreatCheckResponse{
-		IsThreat:   false,
-		Indicator:  req.GetDomain(),
-		ThreatType: "",
-		Confidence: 0,
-	}, nil
+	if s.registry == nil {
+		return nil, status.Error(codes.Unavailable, "registry not available")
+	}
+	svc := s.registry.Get("threat_intel")
+	if svc == nil {
+		return nil, status.Error(codes.Unavailable, "threat_intel not available")
+	}
+	ts, ok := svc.(threat.Interface)
+	if !ok {
+		return nil, status.Error(codes.Internal, "threat_intel type assertion failed")
+	}
+	isThreat, info := ts.IsDomainMalicious(req.GetDomain())
+	resp := &pb.ThreatCheckResponse{
+		IsThreat:  isThreat,
+		Indicator: req.GetDomain(),
+	}
+	if info != nil {
+		resp.ThreatType = info.Type
+	}
+	return resp, nil
 }
 
 // CheckIP checks an IP against threat intel
 func (s *Server) CheckIP(ctx context.Context, req *pb.CheckIPRequest) (*pb.ThreatCheckResponse, error) {
-	return &pb.ThreatCheckResponse{
-		IsThreat:   false,
-		Indicator:  req.GetIp(),
-		ThreatType: "",
-		Confidence: 0,
-	}, nil
+	if s.registry == nil {
+		return nil, status.Error(codes.Unavailable, "registry not available")
+	}
+	svc := s.registry.Get("threat_intel")
+	if svc == nil {
+		return nil, status.Error(codes.Unavailable, "threat_intel not available")
+	}
+	ts, ok := svc.(threat.Interface)
+	if !ok {
+		return nil, status.Error(codes.Internal, "threat_intel type assertion failed")
+	}
+	isThreat, info := ts.IsIPMalicious(req.GetIp())
+	resp := &pb.ThreatCheckResponse{
+		IsThreat:  isThreat,
+		Indicator: req.GetIp(),
+	}
+	if info != nil {
+		resp.ThreatType = info.Type
+	}
+	return resp, nil
 }
 
 // CheckBulk checks multiple indicators
 func (s *Server) CheckBulk(ctx context.Context, req *pb.CheckBulkRequest) (*pb.CheckBulkResponse, error) {
+	if s.registry == nil {
+		return nil, status.Error(codes.Unavailable, "registry not available")
+	}
+	svc := s.registry.Get("threat_intel")
+	if svc == nil {
+		return nil, status.Error(codes.Unavailable, "threat_intel not available")
+	}
+	ts, ok := svc.(threat.Interface)
+	if !ok {
+		return nil, status.Error(codes.Internal, "threat_intel type assertion failed")
+	}
+
 	var results []*pb.ThreatCheckResponse
 
 	for _, domain := range req.GetDomains() {
-		results = append(results, &pb.ThreatCheckResponse{
-			IsThreat:  false,
+		isThreat, info := ts.IsDomainMalicious(domain)
+		r := &pb.ThreatCheckResponse{
+			IsThreat:  isThreat,
 			Indicator: domain,
-		})
+		}
+		if info != nil {
+			r.ThreatType = info.Type
+		}
+		results = append(results, r)
 	}
 
 	for _, ip := range req.GetIps() {
-		results = append(results, &pb.ThreatCheckResponse{
-			IsThreat:  false,
+		isThreat, info := ts.IsIPMalicious(ip)
+		r := &pb.ThreatCheckResponse{
+			IsThreat:  isThreat,
 			Indicator: ip,
-		})
+		}
+		if info != nil {
+			r.ThreatType = info.Type
+		}
+		results = append(results, r)
 	}
 
 	return &pb.CheckBulkResponse{Results: results}, nil

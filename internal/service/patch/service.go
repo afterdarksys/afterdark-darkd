@@ -316,3 +316,10 @@ func (s *Service) getUrgencyReason(p platform.Patch) string {
 	}
 	return "Software update"
 }
+
+// Interface is the minimal interface IPC uses to access the patch service.
+type Interface interface {
+	GetComplianceStatus() *ComplianceStatus
+	GetMissingPatches() []platform.Patch
+	TriggerScan()
+}

@@ -330,6 +330,14 @@ func (s *Service) loadCache(ctx context.Context) error {
 	return nil
 }
 
+// Interface is the minimal interface IPC uses to access the threat service.
+type Interface interface {
+	IsDomainMalicious(domain string) (bool, *darkapi.ThreatInfo)
+	IsIPMalicious(ip string) (bool, *darkapi.ThreatInfo)
+	Stats() *Stats
+	TriggerSync()
+}
+
 func (s *Service) persistCache(ctx context.Context) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
