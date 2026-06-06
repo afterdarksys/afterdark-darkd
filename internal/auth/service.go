@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -480,9 +482,8 @@ func (s *AuthService) logAuthFailure(ctx context.Context, tenantID, identifier, 
 	s.audit.Create(ctx, entry)
 }
 
-// hashToken creates a hash of a token for storage
+// hashToken creates a SHA-256 hash of a token for storage
 func hashToken(token string) string {
-	// Use a simple hash for token storage
-	// In production, consider using SHA-256
-	return token // Placeholder - implement proper hashing
+	h := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(h[:])
 }
