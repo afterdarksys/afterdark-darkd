@@ -4,8 +4,15 @@ package macos
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"os"
+	"os/exec"
 	"runtime"
+	"strings"
 
 	"github.com/afterdarksys/afterdark-darkd/internal/platform"
 	"golang.org/x/sys/unix"
@@ -97,44 +104,125 @@ func (p *Platform) GetHostname() (string, error) {
 	return os.Hostname()
 }
 
-// GetNetworkInterfaces returns network interfaces
+// GetNetworkInterfaces enumerates network interfaces using the stdlib net package.
 func (p *Platform) GetNetworkInterfaces() ([]platform.NetworkInterface, error) {
-	// Use ifconfig or networksetup
-	// This is a stub implementation
-	return []platform.NetworkInterface{}, nil
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]platform.NetworkInterface, 0, len(ifaces))
+	for _, iface := range ifaces {
+		ni := platform.NetworkInterface{
+			Name:       iface.Name,
+			MACAddress: iface.HardwareAddr.String(),
+		}
+		if iface.Flags&net.FlagUp != 0 {
+			ni.Status = "up"
+		} else {
+			ni.Status = "down"
+		}
+		addrs, err := iface.Addrs()
+		if err == nil {
+			for _, addr := range addrs {
+				var ip net.IP
+				switch v := addr.(type) {
+				case *net.IPNet:
+					ip = v.IP
+				case *net.IPAddr:
+					ip = v.IP
+				}
+				if ip != nil && ip.To4() != nil {
+					ni.IPAddress = ip.String()
+					break
+				}
+			}
+		}
+		result = append(result, ni)
+	}
+	return result, nil
 }
 
-// GetPublicIP returns the public IP address
+// GetPublicIP queries api.ipify.org for the machine's public IP.
 func (p *Platform) GetPublicIP(ctx context.Context) (string, error) {
-	// Query external service for public IP
-	// This is a stub implementation
-	return "", nil
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.ipify.org", nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(body)), nil
 }
 
-// SetDNSServers configures DNS servers
+// SetDNSServers configures DNS on all active network services via networksetup.
+// Requires root on macOS 10.15+.
 func (p *Platform) SetDNSServers(servers []string) error {
-	// Use networksetup -setdnsservers
-	// This is a stub implementation
-	return nil
+	out, err := exec.Command("networksetup", "-listallnetworkservices").Output()
+	if err != nil {
+		return fmt.Errorf("listing network services: %w", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	// Skip the header line that explains the asterisk notation.
+	if len(lines) > 0 && strings.HasPrefix(lines[0], "An asterisk") {
+		lines = lines[1:]
+	}
+	var errs []error
+	for _, svc := range lines {
+		svc = strings.TrimPrefix(svc, "*")
+		svc = strings.TrimSpace(svc)
+		if svc == "" {
+			continue
+		}
+		args := append([]string{"-setdnsservers", svc}, servers...)
+		if err := exec.Command("networksetup", args...).Run(); err != nil {
+			errs = append(errs, fmt.Errorf("service %q: %w", svc, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
-// EnableFirewall enables the macOS firewall
+// EnableFirewall enables the macOS Application Firewall via socketfilterfw.
+// Requires root.
 func (p *Platform) EnableFirewall() error {
-	// Use socketfilterfw
-	// This is a stub implementation
-	return nil
+	return exec.Command("/usr/libexec/ApplicationFirewall/socketfilterfw", "--setglobalstate", "on").Run()
 }
 
-// DisableICMP enables/disables ICMP responses
+// DisableICMP blocks or unblocks ICMP via a pf anchor in the com.apple/* namespace.
+// macOS's default /etc/pf.conf traverses com.apple/* anchors so rules take
+// effect without modifying the main ruleset. Requires root.
 func (p *Platform) DisableICMP(enabled bool) error {
-	// Use sysctl or pfctl
-	// This is a stub implementation
+	const anchor = "com.apple/darkd-icmp"
+	if enabled {
+		rules := "block drop proto icmp from any to any\nblock drop proto icmp6 from any to any\n"
+		cmd := exec.Command("pfctl", "-a", anchor, "-f", "-")
+		cmd.Stdin = strings.NewReader(rules)
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("loading icmp block rules: %w", err)
+		}
+		return exec.Command("pfctl", "-e").Run()
+	}
+	if err := exec.Command("pfctl", "-a", anchor, "-F", "all").Run(); err != nil {
+		return fmt.Errorf("flushing icmp block rules: %w", err)
+	}
 	return nil
 }
 
-// BlockIPFragmentation enables/disables IP fragmentation
+// BlockIPFragmentation enables or disables IP fragment reassembly via sysctl.
+// net.inet.ip.maxfragpackets=0 drops all incoming fragments; macOS default is 800.
+// Requires root.
 func (p *Platform) BlockIPFragmentation(enabled bool) error {
-	// Use pfctl
-	// This is a stub implementation
+	val := "0"
+	if !enabled {
+		val = "800"
+	}
+	if err := exec.Command("sysctl", "-w", "net.inet.ip.maxfragpackets="+val).Run(); err != nil {
+		return fmt.Errorf("setting maxfragpackets: %w", err)
+	}
 	return nil
 }
