@@ -46,11 +46,12 @@ func (s State) String() string {
 
 // Daemon represents the main daemon process
 type Daemon struct {
-	config   *models.Config
-	registry *service.Registry
-	state    State
-	mu       sync.RWMutex
-	logger   *zap.Logger
+	config     *models.Config
+	configPath string // path to config file on disk; used by Reload
+	registry   *service.Registry
+	state      State
+	mu         sync.RWMutex
+	logger     *zap.Logger
 
 	// Plugin host
 	pluginHost *plugin.Host
@@ -222,10 +223,37 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 }
 
-// Reload reloads the daemon configuration
+// SetConfigPath stores the on-disk config path used by Reload.
+func (d *Daemon) SetConfigPath(path string) {
+	d.mu.Lock()
+	d.configPath = path
+	d.mu.Unlock()
+}
+
+// Reload re-reads the config file from disk and applies it.
+// If no config path is set the call is a no-op (logs a warning).
 func (d *Daemon) Reload(ctx context.Context) error {
-	d.logger.Info("reloading configuration")
-	// TODO: Implement configuration reload
+	d.mu.RLock()
+	path := d.configPath
+	d.mu.RUnlock()
+
+	if path == "" {
+		d.logger.Warn("Reload called but no config path is set; set one via SetConfigPath")
+		return nil
+	}
+
+	d.logger.Info("reloading configuration", zap.String("path", path))
+
+	newCfg, err := LoadConfig(path)
+	if err != nil {
+		return fmt.Errorf("reload: failed to read config %s: %w", path, err)
+	}
+
+	d.mu.Lock()
+	d.config = newCfg
+	d.mu.Unlock()
+
+	d.logger.Info("configuration reloaded successfully")
 	return nil
 }
 

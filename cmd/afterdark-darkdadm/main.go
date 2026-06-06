@@ -30,6 +30,7 @@ var (
 
 var (
 	socketPath string
+	tokenFile  string
 	apiURL     string
 	outputJSON bool
 )
@@ -47,6 +48,7 @@ Use 'darkdadm api' for direct API operations.`,
 	}
 
 	rootCmd.PersistentFlags().StringVarP(&socketPath, "socket", "s", "/var/run/afterdark/darkd.sock", "path to daemon socket")
+	rootCmd.PersistentFlags().StringVar(&tokenFile, "token-file", "/var/lib/afterdark/.auth_token", "path to IPC auth token file")
 	rootCmd.PersistentFlags().StringVar(&apiURL, "api-url", "https://api.afterdarksys.com", "AfterDark API URL")
 	rootCmd.PersistentFlags().BoolVar(&outputJSON, "json", false, "output in JSON format")
 
@@ -460,7 +462,17 @@ func statusCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			client, err := ipc.NewClient(ctx, socketPath)
+			// Read the auth token from disk; fall back to unauthenticated if missing.
+			var (
+				client ipcpb.DaemonServiceClient
+				err    error
+			)
+			tokenBytes, tokenErr := os.ReadFile(tokenFile)
+			if tokenErr == nil && len(tokenBytes) > 0 {
+				client, err = ipc.NewClientWithToken(ctx, socketPath, strings.TrimSpace(string(tokenBytes)))
+			} else {
+				client, err = ipc.NewClient(ctx, socketPath)
+			}
 			if err != nil {
 				// Fallback to offline status if daemon is not running
 				if outputJSON {

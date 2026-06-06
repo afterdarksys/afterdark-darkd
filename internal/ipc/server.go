@@ -260,12 +260,6 @@ func (s *Server) createUnixListener() (net.Listener, error) {
 	return listener, nil
 }
 
-// createWindowsListener creates a Windows named pipe listener
-func (s *Server) createWindowsListener() (net.Listener, error) {
-	// For Windows, we use a TCP listener on localhost as a fallback
-	// In production, you'd use github.com/Microsoft/go-winio for named pipes
-	return net.Listen("tcp", "127.0.0.1:0")
-}
 
 // loadAuthToken loads the authentication token from disk
 func (s *Server) loadAuthToken() error {
@@ -450,37 +444,59 @@ func generateSecureToken(length int) (string, error) {
 // Client Helper
 // ============================================================================
 
-// Dial connects to the IPC server
-func Dial(ctx context.Context, socketPath string) (*grpc.ClientConn, error) {
-	if socketPath == "" {
-		if runtime.GOOS == "windows" {
-			socketPath = "127.0.0.1:0" // Would need to discover actual port
-		} else {
-			socketPath = DefaultSocketPath
-		}
-	}
-
-	var target string
-	var opts []grpc.DialOption
-
-	if runtime.GOOS == "windows" {
-		target = socketPath
-		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	} else {
-		target = "unix://" + socketPath
-		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	}
-
-	return grpc.DialContext(ctx, target, opts...)
+// tokenCreds injects a Bearer token into every outgoing gRPC call.
+type tokenCreds struct {
+	token string
 }
 
-// NewClient creates a new IPC client
+func (t *tokenCreds) GetRequestMetadata(_ context.Context, _ ...string) (map[string]string, error) {
+	return map[string]string{"authorization": "Bearer " + t.token}, nil
+}
+
+func (t *tokenCreds) RequireTransportSecurity() bool { return false }
+
+// dialTarget returns the gRPC target string for a socket path.
+func dialTarget(socketPath string) string {
+	if runtime.GOOS == "windows" {
+		return socketPath
+	}
+	return "unix://" + socketPath
+}
+
+// Dial connects to the IPC server without authentication.
+func Dial(ctx context.Context, socketPath string) (*grpc.ClientConn, error) {
+	if socketPath == "" {
+		socketPath = DefaultSocketPath
+	}
+	return grpc.DialContext(ctx, dialTarget(socketPath),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+}
+
+// DialWithToken connects to the IPC server and attaches a Bearer token to every RPC.
+func DialWithToken(ctx context.Context, socketPath, token string) (*grpc.ClientConn, error) {
+	if socketPath == "" {
+		socketPath = DefaultSocketPath
+	}
+	return grpc.DialContext(ctx, dialTarget(socketPath),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithPerRPCCredentials(&tokenCreds{token: token}))
+}
+
+// NewClient creates a new IPC client without authentication.
 func NewClient(ctx context.Context, socketPath string) (pb.DaemonServiceClient, error) {
 	conn, err := Dial(ctx, socketPath)
 	if err != nil {
 		return nil, err
 	}
+	return pb.NewDaemonServiceClient(conn), nil
+}
 
+// NewClientWithToken creates a new IPC client that authenticates with a Bearer token.
+func NewClientWithToken(ctx context.Context, socketPath, token string) (pb.DaemonServiceClient, error) {
+	conn, err := DialWithToken(ctx, socketPath, token)
+	if err != nil {
+		return nil, err
+	}
 	return pb.NewDaemonServiceClient(conn), nil
 }
 
