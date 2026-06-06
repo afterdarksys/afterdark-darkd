@@ -279,7 +279,10 @@ func (s *Server) loadAuthToken() error {
 // generateAuthToken generates a new authentication token
 func (s *Server) generateAuthToken() error {
 	// Generate random token
-	token := generateSecureToken(32)
+	token, err := generateSecureToken(32)
+	if err != nil {
+		return fmt.Errorf("failed to generate token: %w", err)
+	}
 
 	// Ensure directory exists
 	tokenDir := filepath.Dir(s.config.AuthTokenPath)
@@ -384,17 +387,32 @@ func (s *Server) validateAuth(ctx context.Context) error {
 	return nil
 }
 
-// generateSecureToken generates a cryptographically secure token
-func generateSecureToken(length int) string {
+// generateSecureToken generates a cryptographically secure token.
+// Returns an error if crypto/rand fails. Callers are responsible for
+// passing a valid (non-zero) length; length 0 returns ("", nil).
+func generateSecureToken(length int) (string, error) {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	b := make([]byte, length)
-	if _, err := rand.Read(b); err != nil {
-		panic(fmt.Sprintf("crypto/rand failed: %v", err))
+	const maxUnbiased = 248 // floor(256/62)*62 = 4*62 = 248; discard 248-255
+
+	result := make([]byte, length)
+	buf := make([]byte, length*2) // over-sample to reduce re-reads
+	filled := 0
+	for filled < length {
+		if _, err := rand.Read(buf); err != nil {
+			return "", fmt.Errorf("crypto/rand read failed: %w", err)
+		}
+		for _, b := range buf {
+			if filled >= length {
+				break
+			}
+			if b >= maxUnbiased {
+				continue // reject to avoid modulo bias
+			}
+			result[filled] = charset[b%byte(len(charset))]
+			filled++
+		}
 	}
-	for i := range b {
-		b[i] = charset[b[i]%byte(len(charset))]
-	}
-	return string(b)
+	return string(result), nil
 }
 
 // ============================================================================
