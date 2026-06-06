@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -436,9 +437,7 @@ func (s *AuthService) ChangePassword(ctx context.Context, userID, currentPasswor
 // Helper methods
 
 func (s *AuthService) findUserByEmail(ctx context.Context, email string) (*User, error) {
-	// For multi-tenant, we might need to search across tenants or require tenant context
-	// For now, assume we have tenant context or search all
-	return nil, ErrNotFound // Placeholder - implement based on requirements
+	return s.users.GetByEmail(ctx, "", strings.ToLower(strings.TrimSpace(email)))
 }
 
 func (s *AuthService) getUserSiteIDs(ctx context.Context, userID string) ([]string, error) {
