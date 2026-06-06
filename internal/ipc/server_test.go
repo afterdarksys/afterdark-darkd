@@ -1,8 +1,11 @@
 package ipc
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	"google.golang.org/grpc/metadata"
 )
 
 const tokenCharset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
@@ -49,5 +52,50 @@ func TestGenerateSecureToken_ZeroLength(t *testing.T) {
 	}
 	if tok != "" {
 		t.Errorf("expected empty string for length 0, got %q", tok)
+	}
+}
+
+func TestValidateAuth_RejectsNoMetadata(t *testing.T) {
+	s := &Server{config: &Config{RequireAuth: true}, authToken: "correcttoken"}
+	err := s.validateAuth(context.Background())
+	if err == nil {
+		t.Error("expected error with no metadata in context")
+	}
+}
+
+func TestValidateAuth_RejectsNoAuthHeader(t *testing.T) {
+	s := &Server{config: &Config{RequireAuth: true}, authToken: "correcttoken"}
+	md := metadata.New(map[string]string{"other": "value"})
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+	err := s.validateAuth(ctx)
+	if err == nil {
+		t.Error("expected error with no authorization header")
+	}
+}
+
+func TestValidateAuth_RejectsBadToken(t *testing.T) {
+	s := &Server{config: &Config{RequireAuth: true}, authToken: "correcttoken"}
+	md := metadata.Pairs("authorization", "Bearer wrongtoken")
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+	err := s.validateAuth(ctx)
+	if err == nil {
+		t.Error("expected error with wrong token")
+	}
+}
+
+func TestValidateAuth_AcceptsCorrectToken(t *testing.T) {
+	s := &Server{config: &Config{RequireAuth: true}, authToken: "correcttoken"}
+	md := metadata.Pairs("authorization", "Bearer correcttoken")
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+	if err := s.validateAuth(ctx); err != nil {
+		t.Errorf("expected no error with correct token, got: %v", err)
+	}
+}
+
+func TestValidateAuth_SkipsWhenAuthDisabled(t *testing.T) {
+	s := &Server{config: &Config{RequireAuth: false}, authToken: ""}
+	err := s.validateAuth(context.Background())
+	if err != nil {
+		t.Errorf("expected no error when auth disabled, got: %v", err)
 	}
 }

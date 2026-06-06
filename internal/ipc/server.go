@@ -3,11 +3,13 @@ package ipc
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +20,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -382,8 +385,34 @@ func (s *Server) streamAuthInterceptor(
 
 // validateAuth validates the authentication token from context metadata
 func (s *Server) validateAuth(ctx context.Context) error {
-	// For now, we're permissive since we control socket permissions
-	// In production, you'd extract the token from gRPC metadata
+	if !s.config.RequireAuth {
+		return nil
+	}
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return status.Error(codes.Unauthenticated, "missing metadata")
+	}
+
+	values := md.Get("authorization")
+	if len(values) == 0 {
+		return status.Error(codes.Unauthenticated, "missing authorization header")
+	}
+
+	bearer := values[0]
+	if !strings.HasPrefix(bearer, "Bearer ") {
+		return status.Error(codes.Unauthenticated, "invalid authorization format")
+	}
+	token := strings.TrimPrefix(bearer, "Bearer ")
+
+	s.authMu.RLock()
+	expected := s.authToken
+	s.authMu.RUnlock()
+
+	if subtle.ConstantTimeCompare([]byte(token), []byte(expected)) != 1 {
+		return status.Error(codes.Unauthenticated, "invalid token")
+	}
+
 	return nil
 }
 
