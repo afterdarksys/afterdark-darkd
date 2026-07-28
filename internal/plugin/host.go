@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -92,8 +93,9 @@ func (h *Host) DiscoverPlugins() ([]string, error) {
 			continue
 		}
 
-		// Check if executable
-		if info.Mode()&0111 != 0 {
+		// Only discover regular, non-writable executables. This is a baseline
+		// integrity gate for a daemon that may execute plugins with privilege.
+		if info.Mode().IsRegular() && info.Mode()&0111 != 0 && info.Mode()&0022 == 0 {
 			plugins = append(plugins, path)
 		}
 	}
@@ -103,6 +105,10 @@ func (h *Host) DiscoverPlugins() ([]string, error) {
 
 // LoadPlugin loads a single plugin from the given path
 func (h *Host) LoadPlugin(path string) (*LoadedPlugin, error) {
+	if err := h.validatePluginPath(path); err != nil {
+		return nil, err
+	}
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -160,6 +166,36 @@ func (h *Host) LoadPlugin(path string) (*LoadedPlugin, error) {
 	)
 
 	return loaded, nil
+}
+
+func (h *Host) validatePluginPath(path string) error {
+	pluginDir, err := filepath.Abs(h.pluginDir)
+	if err != nil {
+		return fmt.Errorf("resolve plugin directory: %w", err)
+	}
+	pluginPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("resolve plugin path: %w", err)
+	}
+	rel, err := filepath.Rel(pluginDir, pluginPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("plugin path is outside plugin directory")
+	}
+
+	info, err := os.Lstat(pluginPath)
+	if err != nil {
+		return fmt.Errorf("stat plugin: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("plugin symlinks are not allowed")
+	}
+	if !info.Mode().IsRegular() || info.Mode()&0111 == 0 {
+		return fmt.Errorf("plugin must be a regular executable file")
+	}
+	if info.Mode()&0022 != 0 {
+		return fmt.Errorf("plugin is writable by group or other users")
+	}
+	return nil
 }
 
 // dispensePlugin tries each plugin type until one succeeds

@@ -149,7 +149,7 @@ func handleConsoleCommand(cmd string) {
 		// Connect to daemon via gRPC
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		client, err := ipc.NewClient(ctx, socketPath)
+		client, err := newAdminClient(ctx)
 		if err != nil {
 			fmt.Printf("Error: cannot connect to daemon: %v\n", err)
 			return
@@ -165,7 +165,7 @@ func handleConsoleCommand(cmd string) {
 	case "services":
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		client, err := ipc.NewClient(ctx, socketPath)
+		client, err := newAdminClient(ctx)
 		if err != nil {
 			fmt.Printf("Error: cannot connect to daemon: %v\n", err)
 			return
@@ -182,7 +182,7 @@ func handleConsoleCommand(cmd string) {
 	case "netstat":
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		client, err := ipc.NewClient(ctx, socketPath)
+		client, err := newAdminClient(ctx)
 		if err != nil {
 			fmt.Printf("Error: cannot connect to daemon: %v\n", err)
 			return
@@ -199,7 +199,7 @@ func handleConsoleCommand(cmd string) {
 	case "beacons":
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		client, err := ipc.NewClient(ctx, socketPath)
+		client, err := newAdminClient(ctx)
 		if err != nil {
 			fmt.Printf("Error: cannot connect to daemon: %v\n", err)
 			return
@@ -216,7 +216,7 @@ func handleConsoleCommand(cmd string) {
 	case "mem":
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		client, err := ipc.NewClient(ctx, socketPath)
+		client, err := newAdminClient(ctx)
 		if err != nil {
 			fmt.Printf("Error: cannot connect to daemon: %v\n", err)
 			return
@@ -233,7 +233,7 @@ func handleConsoleCommand(cmd string) {
 	case "logs":
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		client, err := ipc.NewClient(ctx, socketPath)
+		client, err := newAdminClient(ctx)
 		if err != nil {
 			fmt.Printf("Error: cannot connect to daemon: %v\n", err)
 			return
@@ -249,4 +249,16 @@ func handleConsoleCommand(cmd string) {
 	default:
 		fmt.Printf("Unknown command: %s (type 'help' for commands)\n", parts[0])
 	}
+}
+
+func newAdminClient(ctx context.Context) (ipcpb.DaemonServiceClient, error) {
+	tokenBytes, err := os.ReadFile(tokenFile)
+	if err != nil {
+		return nil, fmt.Errorf("read IPC auth token: %w", err)
+	}
+	token := strings.TrimSpace(string(tokenBytes))
+	if token == "" {
+		return nil, fmt.Errorf("IPC auth token is empty")
+	}
+	return ipc.NewClientWithToken(ctx, socketPath, token)
 }

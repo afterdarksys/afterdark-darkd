@@ -14,7 +14,6 @@ import (
 
 	ipcpb "github.com/afterdarksys/afterdark-darkd/api/proto/ipc"
 	"github.com/afterdarksys/afterdark-darkd/internal/identity"
-	"github.com/afterdarksys/afterdark-darkd/internal/ipc"
 	gopsnet "github.com/shirou/gopsutil/v3/net"
 	"github.com/shirou/gopsutil/v3/process"
 	"github.com/spf13/cobra"
@@ -462,17 +461,7 @@ func statusCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			// Read the auth token from disk; fall back to unauthenticated if missing.
-			var (
-				client ipcpb.DaemonServiceClient
-				err    error
-			)
-			tokenBytes, tokenErr := os.ReadFile(tokenFile)
-			if tokenErr == nil && len(tokenBytes) > 0 {
-				client, err = ipc.NewClientWithToken(ctx, socketPath, strings.TrimSpace(string(tokenBytes)))
-			} else {
-				client, err = ipc.NewClient(ctx, socketPath)
-			}
+			client, err := newAdminClient(ctx)
 			if err != nil {
 				// Fallback to offline status if daemon is not running
 				if outputJSON {

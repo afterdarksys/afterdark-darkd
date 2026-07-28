@@ -14,20 +14,30 @@ import (
 	"time"
 
 	pb "github.com/afterdarksys/afterdark-darkd/api/proto/ipc"
+	"github.com/afterdarksys/afterdark-darkd/internal/ipc/peercred"
 )
 
 // startTestServer starts an IPC server on a temp socket and returns a cleanup func.
 func startTestServer(t *testing.T, requireAuth bool) (socketPath, token string, cleanup func()) {
 	t.Helper()
 
-	dir := t.TempDir()
+	// macOS limits Unix-domain socket paths to a short fixed-size buffer. The
+	// default t.TempDir path under /var/folders can exceed that limit, causing
+	// listen(2) to fail with EINVAL before the test exercises IPC at all.
+	dir, err := os.MkdirTemp("/tmp", "darkd-ipc-")
+	if err != nil {
+		t.Fatalf("creating short temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	socketPath = filepath.Join(dir, "darkd-test.sock")
 	tokenPath := filepath.Join(dir, ".auth_token")
 
 	cfg := &Config{
-		SocketPath:    socketPath,
-		AuthTokenPath: tokenPath,
-		RequireAuth:   requireAuth,
+		SocketPath:             socketPath,
+		AuthTokenPath:          tokenPath,
+		RequireAuth:            requireAuth,
+		RequirePeerCredentials: true,
+		AllowedPeerUIDs:        []uint32{peercred.CurrentUID()},
 	}
 
 	srv, err := New(cfg, nil)

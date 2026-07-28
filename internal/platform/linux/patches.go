@@ -177,6 +177,10 @@ func listAvailableYum(ctx context.Context) ([]platform.Patch, error) {
 
 // InstallPatch installs a package by name using the native package manager.
 func (p *Platform) InstallPatch(ctx context.Context, patchID string) error {
+	patchID = strings.TrimSpace(patchID)
+	if patchID == "" || strings.HasPrefix(patchID, "-") || strings.ContainsAny(patchID, "\r\n\x00") {
+		return fmt.Errorf("invalid Linux patch identifier")
+	}
 	if isDebian() {
 		return exec.CommandContext(ctx, "apt-get", "install", "-y", patchID).Run()
 	}

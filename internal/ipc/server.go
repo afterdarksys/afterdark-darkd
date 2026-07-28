@@ -14,6 +14,7 @@ import (
 	"time"
 
 	pb "github.com/afterdarksys/afterdark-darkd/api/proto/ipc"
+	"github.com/afterdarksys/afterdark-darkd/internal/ipc/peercred"
 	"github.com/afterdarksys/afterdark-darkd/internal/service"
 	"github.com/afterdarksys/afterdark-darkd/internal/service/patch"
 	"github.com/afterdarksys/afterdark-darkd/internal/service/threat"
@@ -21,8 +22,10 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -48,6 +51,13 @@ type Config struct {
 	// RequireAuth enables token-based authentication
 	RequireAuth bool
 
+	// RequirePeerCredentials requires the connecting Unix peer UID to be
+	// allowlisted in addition to the bearer token.
+	RequirePeerCredentials bool
+
+	// AllowedPeerUIDs is the set of operating-system UIDs allowed to connect.
+	AllowedPeerUIDs []uint32
+
 	// MaxConnections limits concurrent connections
 	MaxConnections int
 }
@@ -60,11 +70,13 @@ func DefaultConfig() *Config {
 	}
 
 	return &Config{
-		SocketPath:     socketPath,
-		PipeName:       DefaultWindowsPipeName,
-		AuthTokenPath:  "/var/lib/afterdark/.auth_token",
-		RequireAuth:    true,
-		MaxConnections: 100,
+		SocketPath:             socketPath,
+		PipeName:               DefaultWindowsPipeName,
+		AuthTokenPath:          "/var/lib/afterdark/.auth_token",
+		RequireAuth:            true,
+		RequirePeerCredentials: true,
+		AllowedPeerUIDs:        []uint32{peercred.CurrentUID()},
+		MaxConnections:         100,
 	}
 }
 
@@ -96,6 +108,9 @@ type Server struct {
 func New(config *Config, registry service.RegistryInterface) (*Server, error) {
 	if config == nil {
 		config = DefaultConfig()
+	}
+	if config.RequirePeerCredentials && len(config.AllowedPeerUIDs) == 0 {
+		config.AllowedPeerUIDs = []uint32{peercred.CurrentUID()}
 	}
 
 	s := &Server{
@@ -138,7 +153,12 @@ func (s *Server) Start(ctx context.Context) error {
 	s.listener = listener
 
 	// Create gRPC server with interceptors
+	transportCreds := credentials.TransportCredentials(insecure.NewCredentials())
+	if runtime.GOOS != "windows" {
+		transportCreds = &localCredentials{}
+	}
 	opts := []grpc.ServerOption{
+		grpc.Creds(transportCreds),
 		grpc.ChainUnaryInterceptor(
 			s.loggingInterceptor,
 			s.authInterceptor,
@@ -236,8 +256,11 @@ func (s *Server) createUnixListener() (net.Listener, error) {
 
 	// Ensure directory exists
 	socketDir := filepath.Dir(socketPath)
-	if err := os.MkdirAll(socketDir, 0755); err != nil {
+	if err := os.MkdirAll(socketDir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create socket directory: %w", err)
+	}
+	if err := os.Chmod(socketDir, 0700); err != nil {
+		return nil, fmt.Errorf("failed to restrict socket directory: %w", err)
 	}
 
 	// Remove existing socket
@@ -260,7 +283,6 @@ func (s *Server) createUnixListener() (net.Listener, error) {
 	return listener, nil
 }
 
-
 // loadAuthToken loads the authentication token from disk
 func (s *Server) loadAuthToken() error {
 	data, err := os.ReadFile(s.config.AuthTokenPath)
@@ -268,8 +290,13 @@ func (s *Server) loadAuthToken() error {
 		return err
 	}
 
+	token := strings.TrimSpace(string(data))
+	if token == "" {
+		return fmt.Errorf("authentication token is empty")
+	}
+
 	s.authMu.Lock()
-	s.authToken = string(data)
+	s.authToken = token
 	s.authMu.Unlock()
 
 	return nil
@@ -287,6 +314,9 @@ func (s *Server) generateAuthToken() error {
 	tokenDir := filepath.Dir(s.config.AuthTokenPath)
 	if err := os.MkdirAll(tokenDir, 0700); err != nil {
 		return fmt.Errorf("failed to create token directory: %w", err)
+	}
+	if err := os.Chmod(tokenDir, 0700); err != nil {
+		return fmt.Errorf("failed to restrict token directory: %w", err)
 	}
 
 	// Write token file with restricted permissions
@@ -331,9 +361,15 @@ func (s *Server) authInterceptor(
 	handler grpc.UnaryHandler,
 ) (interface{}, error) {
 	if !s.config.RequireAuth {
+		if err := s.validatePeer(ctx); err != nil {
+			return nil, err
+		}
 		return handler(ctx, req)
 	}
 
+	if err := s.validatePeer(ctx); err != nil {
+		return nil, err
+	}
 	if err := s.validateAuth(ctx); err != nil {
 		return nil, err
 	}
@@ -369,14 +405,41 @@ func (s *Server) streamAuthInterceptor(
 	handler grpc.StreamHandler,
 ) error {
 	if !s.config.RequireAuth {
+		if err := s.validatePeer(ss.Context()); err != nil {
+			return err
+		}
 		return handler(srv, ss)
 	}
 
+	if err := s.validatePeer(ss.Context()); err != nil {
+		return err
+	}
 	if err := s.validateAuth(ss.Context()); err != nil {
 		return err
 	}
 
 	return handler(srv, ss)
+}
+
+func (s *Server) validatePeer(ctx context.Context) error {
+	if !s.config.RequirePeerCredentials || runtime.GOOS == "windows" {
+		return nil
+	}
+
+	p, ok := peer.FromContext(ctx)
+	if !ok || p.AuthInfo == nil {
+		return status.Error(codes.Unauthenticated, "missing peer credentials")
+	}
+	info, ok := p.AuthInfo.(*localAuthInfo)
+	if !ok {
+		return status.Error(codes.Unauthenticated, "invalid peer credentials")
+	}
+	for _, allowed := range s.config.AllowedPeerUIDs {
+		if info.UID == allowed {
+			return nil
+		}
+	}
+	return status.Error(codes.PermissionDenied, "peer UID is not authorized")
 }
 
 // validateAuth validates the authentication token from context metadata
@@ -469,7 +532,7 @@ func Dial(ctx context.Context, socketPath string) (*grpc.ClientConn, error) {
 		socketPath = DefaultSocketPath
 	}
 	return grpc.DialContext(ctx, dialTarget(socketPath),
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
+		grpc.WithTransportCredentials(clientTransportCredentials()))
 }
 
 // DialWithToken connects to the IPC server and attaches a Bearer token to every RPC.
@@ -478,9 +541,49 @@ func DialWithToken(ctx context.Context, socketPath, token string) (*grpc.ClientC
 		socketPath = DefaultSocketPath
 	}
 	return grpc.DialContext(ctx, dialTarget(socketPath),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(clientTransportCredentials()),
 		grpc.WithPerRPCCredentials(&tokenCreds{token: token}))
 }
+
+func clientTransportCredentials() credentials.TransportCredentials {
+	if runtime.GOOS != "windows" {
+		return &localCredentials{}
+	}
+	return insecure.NewCredentials()
+}
+
+type localAuthInfo struct {
+	credentials.CommonAuthInfo
+	UID uint32
+}
+
+func (localAuthInfo) AuthType() string { return "unix-peer" }
+
+type localCredentials struct{}
+
+func (*localCredentials) ClientHandshake(_ context.Context, _ string, conn net.Conn) (net.Conn, credentials.AuthInfo, error) {
+	uid, err := peercred.FromConn(conn)
+	if err != nil {
+		return nil, nil, err
+	}
+	return conn, &localAuthInfo{UID: uid}, nil
+}
+
+func (*localCredentials) ServerHandshake(conn net.Conn) (net.Conn, credentials.AuthInfo, error) {
+	uid, err := peercred.FromConn(conn)
+	if err != nil {
+		return nil, nil, err
+	}
+	return conn, &localAuthInfo{UID: uid}, nil
+}
+
+func (*localCredentials) Info() credentials.ProtocolInfo {
+	return credentials.ProtocolInfo{SecurityProtocol: "unix-peer"}
+}
+
+func (c *localCredentials) Clone() credentials.TransportCredentials { return c }
+
+func (*localCredentials) OverrideServerName(string) error { return nil }
 
 // NewClient creates a new IPC client without authentication.
 func NewClient(ctx context.Context, socketPath string) (pb.DaemonServiceClient, error) {
