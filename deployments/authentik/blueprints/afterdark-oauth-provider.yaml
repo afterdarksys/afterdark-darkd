@@ -1,0 +1,50 @@
+version: 1
+metadata:
+  name: AfterDark OAuth2 Provider & Application
+  labels:
+    app: afterdark-security-suite
+    managed-by: blueprint
+context:
+  client_id: afterdark-security-suite
+  client_secret: !Env AFTERDARK_OAUTH_SECRET
+  redirect_uris:
+    - http://localhost:9090/oauth/callback
+    - http://localhost:8080/oauth/callback
+    - https://afterdark.local/oauth/callback
+
+entries:
+  # OAuth2 Provider
+  - model: authentik_providers_oauth2.oauth2provider
+    identifiers:
+      name: AfterDark OAuth2 Provider
+    id: afterdark-oauth2-provider
+    attrs:
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      client_type: confidential
+      client_id: !Context client_id
+      client_secret: !Context client_secret
+      redirect_uris: !Format [!Context redirect_uris, "\n"]
+      sub_mode: hashed_user_id
+      include_claims_in_id_token: true
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      access_code_validity: minutes=1
+      access_token_validity: minutes=5
+      refresh_token_validity: days=30
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
+
+  # Application
+  - model: authentik_core.application
+    identifiers:
+      slug: afterdark-security-suite
+    attrs:
+      name: AfterDark Security Suite
+      provider: !KeyOf afterdark-oauth2-provider
+      meta_launch_url: http://localhost:9090/
+      meta_description: AfterDark Security Suite - Unified Security Platform
+      meta_publisher: AfterDark Technologies
+      group: AfterDark
+      policy_engine_mode: any
+      open_in_new_tab: false

@@ -1,0 +1,25 @@
+# Secrets and credentials
+.env
+.env.production
+terraform.tfvars
+*.tfvars
+
+# Service-specific environment files
+config/services/**/.env*
+
+# Terraform state files
+terraform.tfstate
+terraform.tfstate.*
+*.tfstate
+*.tfstate.*
+
+# Terraform plugins
+.terraform/
+.terraform.lock.hcl
+
+# Configuration exports
+config/*.json
+
+# Backup files
+backups/*.tar.gz
+backups/*.sql

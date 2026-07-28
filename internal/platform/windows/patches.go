@@ -110,6 +110,10 @@ $result.Updates | Select-Object @{N='Title';E={$_.Title}},@{N='ID';E={$_.Identit
 // InstallPatch installs a Windows update by KB article ID using wusa.exe.
 // Requires the update .msu to be on disk, or falls back to DISM for in-box components.
 func (p *Platform) InstallPatch(ctx context.Context, patchID string) error {
+	patchID = strings.TrimSpace(patchID)
+	if patchID == "" || strings.HasPrefix(patchID, "/") || strings.ContainsAny(patchID, "\r\n\x00") {
+		return fmt.Errorf("invalid Windows patch identifier")
+	}
 	// wusa.exe accepts /kb: flag for updates already downloaded by Windows Update.
 	// The /forcequiet flag suppresses the reboot dialog.
 	err := exec.CommandContext(ctx, "wusa.exe",

@@ -1,0 +1,166 @@
+/*
+ * AfterDark Custom Authentik Theme
+ * Removes distracting background images for better accessibility
+ * Optimized for users with visual impairments (cataracts)
+ */
+
+/* Remove background images from all contexts */
+body,
+.pf-c-page,
+.pf-c-login,
+.pf-c-background-image,
+.ak-login-container,
+[class*="background"],
+[class*="Background"] {
+    background-image: none !important;
+    background: #1a1a1a !important;
+}
+
+/* Solid dark background for main areas */
+.pf-c-page__main,
+.pf-c-login__main {
+    background-color: #1a1a1a !important;
+}
+
+/* Card backgrounds - slightly lighter for contrast */
+.pf-c-card,
+.pf-c-login__main-body,
+.ak-login-container .pf-c-card {
+    background-color: #2a2a2a !important;
+    border: 1px solid #3a3a3a !important;
+}
+
+/* Form elements - improve contrast */
+.pf-c-form-control,
+.pf-c-select__toggle,
+input[type="text"],
+input[type="password"],
+input[type="email"] {
+    background-color: #333333 !important;
+    border: 1px solid #4a4a4a !important;
+    color: #ffffff !important;
+}
+
+/* Button styling */
+.pf-c-button {
+    border: 1px solid #4a4a4a !important;
+}
+
+.pf-c-button.pf-m-primary {
+    background-color: #0066cc !important;
+    border-color: #0066cc !important;
+}
+
+.pf-c-button.pf-m-primary:hover {
+    background-color: #0052a3 !important;
+}
+
+/* Text contrast improvements */
+body,
+.pf-c-login__main,
+.pf-c-card__body,
+.pf-c-form__label {
+    color: #e0e0e0 !important;
+}
+
+/* Header/Navigation */
+.pf-c-page__header {
+    background-color: #0a0a0a !important;
+    border-bottom: 1px solid #3a3a3a !important;
+}
+
+/* Remove any decorative elements that might be distracting */
+.pf-c-login__main-footer-band {
+    display: none !important;
+}
+
+/* Improve focus indicators for accessibility */
+input:focus,
+button:focus,
+a:focus {
+    outline: 2px solid #4a9eff !important;
+    outline-offset: 2px !important;
+}
+
+/* High contrast text */
+h1, h2, h3, h4, h5, h6 {
+    color: #ffffff !important;
+}
+
+/* Links */
+a {
+    color: #4a9eff !important;
+}
+
+a:hover {
+    color: #6bb1ff !important;
+}
+
+/* Remove background patterns */
+*::before,
+*::after {
+    background-image: none !important;
+}
+
+/* Sidebar/Navigation menu */
+.pf-c-nav {
+    background-color: #1a1a1a !important;
+}
+
+.pf-c-nav__link {
+    color: #e0e0e0 !important;
+}
+
+.pf-c-nav__link:hover,
+.pf-c-nav__link.pf-m-current {
+    background-color: #2a2a2a !important;
+}
+
+/* Tables */
+.pf-c-table {
+    background-color: #2a2a2a !important;
+}
+
+.pf-c-table thead {
+    background-color: #1a1a1a !important;
+    border-bottom: 2px solid #3a3a3a !important;
+}
+
+.pf-c-table tbody tr {
+    border-bottom: 1px solid #3a3a3a !important;
+}
+
+/* Modal/Dialog backgrounds */
+.pf-c-modal-box {
+    background-color: #2a2a2a !important;
+    border: 1px solid #3a3a3a !important;
+}
+
+/* Tooltips */
+.pf-c-tooltip__content {
+    background-color: #1a1a1a !important;
+    border: 1px solid #4a4a4a !important;
+}
+
+/* Notifications */
+.pf-c-alert {
+    background-color: #2a2a2a !important;
+    border-left: 3px solid #4a9eff !important;
+}
+
+/* Code/Pre blocks */
+code,
+pre {
+    background-color: #0a0a0a !important;
+    color: #e0e0e0 !important;
+    border: 1px solid #3a3a3a !important;
+}
+
+/* Reduce motion for users with vestibular disorders */
+@media (prefers-reduced-motion: reduce) {
+    * {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
