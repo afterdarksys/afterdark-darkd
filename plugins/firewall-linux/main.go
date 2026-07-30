@@ -38,15 +38,15 @@ const (
 type LinuxFirewall struct {
 	sdk.BaseFirewallPlugin
 
-	mu           sync.RWMutex
-	backend      string
-	backendVer   string
-	enabled      bool
-	rules        map[string]*sdk.FirewallRule
-	blockedIPs   map[string]*sdk.BlockedIP
+	mu             sync.RWMutex
+	backend        string
+	backendVer     string
+	enabled        bool
+	rules          map[string]*sdk.FirewallRule
+	blockedIPs     map[string]*sdk.BlockedIP
 	defaultDenyIn  bool
 	defaultDenyOut bool
-	logger       func(string, ...interface{})
+	logger         func(string, ...interface{})
 }
 
 func (f *LinuxFirewall) Info() sdk.PluginInfo {
@@ -401,6 +401,9 @@ func (f *LinuxFirewall) IsIPBlocked(ctx context.Context, ip string) (bool, *sdk.
 }
 
 func (f *LinuxFirewall) AddRule(ctx context.Context, rule *sdk.FirewallRule) (*sdk.FirewallRule, error) {
+	if err := validateFirewallRule(rule); err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
