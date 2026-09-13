@@ -19,11 +19,18 @@ import (
 
 // Service tracks network connections over time
 type Service struct {
-	mu      sync.RWMutex
-	config  *models.TrackingConfig
-	running bool
-	cancel  context.CancelFunc
-	logger  *zap.Logger
+	lifecycle sync.Mutex
+	stopping  bool
+	mu        sync.RWMutex
+	config    *models.TrackingConfig
+	running   bool
+	cancel    context.CancelFunc
+	logger    *zap.Logger
+
+	observer      func([]models.ConnectionEvent)
+	done          chan struct{}
+	lastScan      time.Time
+	lastScanError string
 
 	// Current connections
 	activeConns map[string]*models.NetworkConnection
@@ -49,6 +56,13 @@ func New(config *models.TrackingConfig) *Service {
 	}
 }
 
+// SetObserver attaches a local evidence sink before the service starts.
+func (s *Service) SetObserver(observer func([]models.ConnectionEvent)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.observer = observer
+}
+
 // Name returns the service identifier
 func (s *Service) Name() string {
 	return "connection_tracker"
@@ -56,13 +70,20 @@ func (s *Service) Name() string {
 
 // Start initializes and starts the service
 func (s *Service) Start(ctx context.Context) error {
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
 	s.mu.Lock()
+	if s.stopping {
+		s.mu.Unlock()
+		return fmt.Errorf("%s is still stopping", s.Name())
+	}
 	if s.running {
 		s.mu.Unlock()
 		return nil
 	}
 
 	s.running = true
+	s.done = make(chan struct{})
 	ctx, s.cancel = context.WithCancel(ctx)
 	s.mu.Unlock()
 
@@ -70,7 +91,7 @@ func (s *Service) Start(ctx context.Context) error {
 		zap.Duration("interval", s.config.NetworkInterval))
 
 	// Initial scan
-	if err := s.scan(); err != nil {
+	if err := s.scan(ctx); err != nil {
 		s.logger.Warn("initial connection scan failed", zap.Error(err))
 	}
 
@@ -85,20 +106,27 @@ func (s *Service) Start(ctx context.Context) error {
 
 // Stop gracefully shuts down the service
 func (s *Service) Stop(ctx context.Context) error {
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if !s.running {
+		s.mu.Unlock()
 		return nil
 	}
-
-	s.running = false
-	if s.cancel != nil {
-		s.cancel()
+	s.stopping = true
+	s.cancel()
+	done := s.done
+	s.mu.Unlock()
+	select {
+	case <-done:
+		s.mu.Lock()
+		s.running = false
+		s.stopping = false
+		s.mu.Unlock()
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-
-	s.logger.Info("connection tracker service stopped")
-	return nil
 }
 
 // Health returns the current health status
@@ -106,7 +134,7 @@ func (s *Service) Health() service.HealthStatus {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if !s.running {
+	if !s.running || s.stopping {
 		return service.HealthStatus{
 			Status:    service.HealthUnhealthy,
 			Message:   "service not running",
@@ -114,7 +142,19 @@ func (s *Service) Health() service.HealthStatus {
 		}
 	}
 
+	if s.lastScan.IsZero() || s.lastScanError != "" {
+		return service.HealthStatus{Status: service.HealthDegraded, Message: "no successful scan or latest scan failed: " + s.lastScanError, LastCheck: time.Now()}
+	}
+	interval := s.config.NetworkInterval
+	if interval <= 0 {
+		interval = 10 * time.Second
+	}
+	if time.Since(s.lastScan) > 2*interval+30*time.Second {
+		return service.HealthStatus{Status: service.HealthDegraded, Message: "sensor observations are stale", LastCheck: time.Now(), Metrics: map[string]interface{}{"last_successful_scan": s.lastScan}}
+	}
 	metrics := make(map[string]interface{})
+	metrics["collection_method"] = "polling"
+	metrics["last_successful_scan"] = s.lastScan
 	metrics["active_connections"] = len(s.activeConns)
 	metrics["tracked_connections"] = len(s.trackedConns)
 	if s.lastSummary != nil {
@@ -141,8 +181,11 @@ func (s *Service) Configure(config interface{}) error {
 
 // runLoop runs the periodic connection scan
 func (s *Service) runLoop(ctx context.Context) {
+	defer close(s.done)
+	s.mu.RLock()
 	interval := s.config.NetworkInterval
-	if interval == 0 {
+	s.mu.RUnlock()
+	if interval <= 0 {
 		interval = 10 * time.Second
 	}
 
@@ -154,7 +197,7 @@ func (s *Service) runLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := s.scan(); err != nil {
+			if err := s.scan(ctx); err != nil {
 				s.logger.Warn("connection scan failed", zap.Error(err))
 			}
 		}
@@ -162,8 +205,18 @@ func (s *Service) runLoop(ctx context.Context) {
 }
 
 // scan collects current network connections
-func (s *Service) scan() error {
-	conns, err := gopsnet.Connections("all")
+func (s *Service) scan(ctx context.Context) (scanErr error) {
+	defer func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if scanErr != nil {
+			s.lastScanError = scanErr.Error()
+		} else {
+			s.lastScan = time.Now()
+			s.lastScanError = ""
+		}
+	}()
+	conns, err := gopsnet.ConnectionsWithContext(ctx, "all")
 	if err != nil {
 		return err
 	}
@@ -176,18 +229,24 @@ func (s *Service) scan() error {
 	uniqueProcs := make(map[int32]struct{})
 	procConnCount := make(map[int32]int)
 
+	s.mu.RLock()
+	trackLocal := s.config.TrackLocalConns
+	s.mu.RUnlock()
 	for _, c := range conns {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		// Skip connections without remote address (unless listening)
 		if c.Raddr.IP == "" && c.Status != "LISTEN" {
 			continue
 		}
 
 		// Skip local connections if configured
-		if !s.config.TrackLocalConns && isLocalIP(c.Raddr.IP) {
+		if !trackLocal && isLocalIP(c.Raddr.IP) {
 			continue
 		}
 
-		conn := s.connectionFromGopsutil(c, now)
+		conn := s.connectionFromGopsutil(ctx, c, now)
 		key := s.connectionKey(conn)
 
 		newActive[key] = conn
@@ -216,11 +275,15 @@ func (s *Service) scan() error {
 	}
 
 	// Detect closed connections
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	newEvents := []models.ConnectionEvent{}
 	s.mu.Lock()
 	for key, oldConn := range s.activeConns {
 		if _, exists := newActive[key]; !exists {
 			// Connection closed
-			s.addEvent("closed", oldConn)
+			newEvents = append(newEvents, s.addEvent("closed", oldConn))
 		}
 	}
 
@@ -228,7 +291,7 @@ func (s *Service) scan() error {
 	for key, newConn := range newActive {
 		if _, exists := s.activeConns[key]; !exists {
 			// New connection
-			s.addEvent("new", newConn)
+			newEvents = append(newEvents, s.addEvent("new", newConn))
 		}
 	}
 
@@ -244,21 +307,26 @@ func (s *Service) scan() error {
 		UniqueRemoteIPs: len(uniqueIPs),
 		UniqueProcesses: len(uniqueProcs),
 		TopDestinations: s.getTopDestinations(10),
-		TopProcesses:    s.getTopProcesses(procConnCount, 10),
+		TopProcesses:    s.getTopProcesses(ctx, procConnCount, 10),
 	}
 
+	observer := s.observer
+	trackedCount := len(s.trackedConns)
 	s.mu.Unlock()
+	if observer != nil {
+		observer(newEvents)
+	}
 
 	s.logger.Debug("connection scan complete",
 		zap.Int("active", len(newActive)),
 		zap.Int("established", established),
-		zap.Int("tracked", len(s.trackedConns)))
+		zap.Int("tracked", trackedCount))
 
 	return nil
 }
 
 // connectionFromGopsutil converts gopsutil connection to our model
-func (s *Service) connectionFromGopsutil(c gopsnet.ConnectionStat, now time.Time) *models.NetworkConnection {
+func (s *Service) connectionFromGopsutil(ctx context.Context, c gopsnet.ConnectionStat, now time.Time) *models.NetworkConnection {
 	conn := &models.NetworkConnection{
 		Protocol:   protocolName(c.Type),
 		LocalAddr:  c.Laddr.IP,
@@ -273,11 +341,14 @@ func (s *Service) connectionFromGopsutil(c gopsnet.ConnectionStat, now time.Time
 
 	// Get process name
 	if c.Pid > 0 {
-		if p, err := process.NewProcess(c.Pid); err == nil {
-			if name, err := p.Name(); err == nil {
+		if p, err := process.NewProcessWithContext(ctx, c.Pid); err == nil {
+			if started, err := p.CreateTimeWithContext(ctx); err == nil {
+				conn.ProcessStartTime = time.UnixMilli(started)
+			}
+			if name, err := p.NameWithContext(ctx); err == nil {
 				conn.ProcessName = name
 			}
-			if username, err := p.Username(); err == nil {
+			if username, err := p.UsernameWithContext(ctx); err == nil {
 				conn.Username = username
 			}
 		}
@@ -288,8 +359,8 @@ func (s *Service) connectionFromGopsutil(c gopsnet.ConnectionStat, now time.Time
 
 // connectionKey generates a unique key for a connection
 func (s *Service) connectionKey(c *models.NetworkConnection) string {
-	return fmt.Sprintf("%s:%s:%d:%s:%d",
-		c.Protocol, c.LocalAddr, c.LocalPort, c.RemoteAddr, c.RemotePort)
+	return fmt.Sprintf("%s:%s:%d:%s:%d:%d:%s",
+		c.Protocol, c.LocalAddr, c.LocalPort, c.RemoteAddr, c.RemotePort, c.PID, c.ProcessStartTime.UTC().Format(time.RFC3339Nano))
 }
 
 // updateTracked updates or creates a tracked connection
@@ -418,7 +489,7 @@ func (s *Service) resolveHostname(key, ip string) {
 }
 
 // addEvent adds a connection event to history
-func (s *Service) addEvent(eventType string, conn *models.NetworkConnection) {
+func (s *Service) addEvent(eventType string, conn *models.NetworkConnection) models.ConnectionEvent {
 	event := models.ConnectionEvent{
 		Timestamp:  time.Now(),
 		EventType:  eventType,
@@ -431,6 +502,7 @@ func (s *Service) addEvent(eventType string, conn *models.NetworkConnection) {
 	if len(s.events) > 1000 {
 		s.events = s.events[100:]
 	}
+	return event
 }
 
 // getTopDestinations returns top N destinations by connection count
@@ -475,7 +547,7 @@ func (s *Service) getTopDestinations(n int) []models.DestinationStat {
 }
 
 // getTopProcesses returns top N processes by connection count
-func (s *Service) getTopProcesses(counts map[int32]int, n int) []models.ProcessConnStat {
+func (s *Service) getTopProcesses(ctx context.Context, counts map[int32]int, n int) []models.ProcessConnStat {
 	// Get unique IPs per process
 	procIPs := make(map[int32]map[string]struct{})
 	for _, tracked := range s.trackedConns {
@@ -489,8 +561,8 @@ func (s *Service) getTopProcesses(counts map[int32]int, n int) []models.ProcessC
 	stats := make([]models.ProcessConnStat, 0, len(counts))
 	for pid, count := range counts {
 		var procName string
-		if p, err := process.NewProcess(pid); err == nil {
-			if name, err := p.Name(); err == nil {
+		if p, err := process.NewProcessWithContext(ctx, pid); err == nil {
+			if name, err := p.NameWithContext(ctx); err == nil {
 				procName = name
 			}
 		}

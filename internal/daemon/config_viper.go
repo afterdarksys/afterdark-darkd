@@ -119,6 +119,10 @@ func (vc *ViperConfig) WatchConfig(onChange func(cfg *models.Config)) {
 
 // setDefaults configures Viper defaults from models.DefaultConfig
 func setDefaults(v *viper.Viper) {
+	v.SetDefault("services.investigation.enabled", false)
+	v.SetDefault("services.investigation.retention", 7*24*time.Hour)
+	v.SetDefault("services.investigation.max_events", 100000)
+	v.SetDefault("services.investigation.include_command_line", false)
 	// Daemon defaults
 	v.SetDefault("daemon.log_level", "info")
 	v.SetDefault("daemon.data_dir", "/var/lib/afterdark")

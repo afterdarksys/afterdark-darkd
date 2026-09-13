@@ -291,6 +291,10 @@ func (d *Daemon) Reload(ctx context.Context) error {
 	}
 
 	d.mu.Lock()
+	if newCfg.Services.Investigation != d.config.Services.Investigation || newCfg.Daemon.DataDir != d.config.Daemon.DataDir {
+		d.mu.Unlock()
+		return fmt.Errorf("reload: investigation settings and data directory changes require a restart")
+	}
 	d.config = newCfg
 	d.mu.Unlock()
 

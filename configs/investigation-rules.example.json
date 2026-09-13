@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "rules": [
+    {
+      "id": "research.netcat-observed",
+      "version": "1.0.0",
+      "description": "Netcat-family process observed; investigate context before classifying it as malicious.",
+      "kind": "process.observed",
+      "all": [
+        {"field": "process.name", "operator": "regex", "value": "^(nc|ncat|netcat)(\\.exe)?$"}
+      ]
+    },
+    {
+      "id": "research.port-4444",
+      "version": "1.0.0",
+      "description": "Connection observed to port 4444; a research signal, not a malware verdict.",
+      "kind": "network.observed",
+      "all": [
+        {"field": "network.remote_port", "operator": "equals", "value": "4444"}
+      ]
+    }
+  ]
+}

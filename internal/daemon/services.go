@@ -2,10 +2,12 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/afterdarksys/afterdark-darkd/internal/api/afterdark"
 	"github.com/afterdarksys/afterdark-darkd/internal/api/darkapi"
+	"github.com/afterdarksys/afterdark-darkd/internal/investigation"
 	"github.com/afterdarksys/afterdark-darkd/internal/models"
 	platformfactory "github.com/afterdarksys/afterdark-darkd/internal/platform/factory"
 	"github.com/afterdarksys/afterdark-darkd/internal/scripting"
@@ -80,6 +82,13 @@ func (d *Daemon) InitializeServices() error {
 	})
 
 	// Register core services in dependency order
+	var recorder *investigation.Recorder
+	if cfg.Services.Investigation.Enabled {
+		recorder = investigation.NewRecorder(cfg.Daemon.DataDir, cfg.Services.Investigation)
+		if err := d.registry.Register(recorder); err != nil {
+			return fmt.Errorf("register investigation: %w", err)
+		}
+	}
 
 	// 1. Network service (foundational)
 	if cfg.Services.NetworkMonitor.Enabled && plat != nil {
@@ -92,6 +101,9 @@ func (d *Daemon) InitializeServices() error {
 	// 2. Connection tracker (depends on network)
 	if cfg.Services.NetworkMonitor.Enabled {
 		conntrackSvc := conntrack.New(&cfg.Services.NetworkMonitor.Tracking)
+		if recorder != nil {
+			conntrackSvc.SetObserver(recorder.ObserveConnections)
+		}
 		if err := d.registry.Register(conntrackSvc); err != nil {
 			d.logger.Error("failed to register connection tracker", zap.Error(err))
 		}
@@ -99,6 +111,9 @@ func (d *Daemon) InitializeServices() error {
 
 	// 3. Process monitor
 	processSvc := process.New(&cfg.Services.ProcessMonitor)
+	if recorder != nil {
+		processSvc.SetObserver(recorder.ObserveProcesses)
+	}
 	if err := d.registry.Register(processSvc); err != nil {
 		d.logger.Error("failed to register process service", zap.Error(err))
 	}
