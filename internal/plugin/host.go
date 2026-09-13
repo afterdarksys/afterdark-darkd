@@ -213,11 +213,15 @@ func (h *Host) verifyPluginIntegrity(pluginPath string) error {
 	if manifestPath == "" {
 		manifestPath = filepath.Join(h.pluginDir, "plugin-manifest.json")
 	}
+	info, err := os.Lstat(manifestPath)
+	if err != nil {
+		return fmt.Errorf("plugin integrity manifest unavailable: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0022 != 0 {
+		return fmt.Errorf("plugin manifest must be a regular file not writable by group or others")
+	}
 	manifest, err := os.ReadFile(manifestPath)
 	if err != nil {
-		if os.IsNotExist(err) && os.Getenv("AFTERDARK_REQUIRE_PLUGIN_INTEGRITY") != "1" {
-			return nil
-		}
 		return fmt.Errorf("plugin integrity manifest unavailable: %w", err)
 	}
 

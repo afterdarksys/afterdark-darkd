@@ -155,7 +155,7 @@ func (c *reporterGRPCClient) Configure(config map[string]interface{}) error {
 		return err
 	}
 	if !resp.Success {
-		return fmt.Errorf(resp.Error)
+		return fmt.Errorf("%s", resp.Error)
 	}
 	return nil
 }
@@ -178,7 +178,7 @@ func (c *reporterGRPCClient) Generate(ctx context.Context, format string, data m
 		return nil, err
 	}
 	if !resp.Success {
-		return nil, fmt.Errorf(resp.Error)
+		return nil, fmt.Errorf("%s", resp.Error)
 	}
 	return resp.Report, nil
 }

@@ -184,7 +184,7 @@ func (c *cliGRPCClient) Configure(config map[string]interface{}) error {
 		return err
 	}
 	if !resp.Success {
-		return fmt.Errorf(resp.Error)
+		return fmt.Errorf("%s", resp.Error)
 	}
 	return nil
 }
@@ -240,7 +240,7 @@ func (c *cliGRPCClient) Execute(ctx context.Context, command string, args []stri
 		return "", err
 	}
 	if !resp.Success {
-		return resp.Output, fmt.Errorf(resp.Error)
+		return resp.Output, fmt.Errorf("%s", resp.Error)
 	}
 	return resp.Output, nil
 }

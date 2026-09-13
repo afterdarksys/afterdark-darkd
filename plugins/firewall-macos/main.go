@@ -276,7 +276,7 @@ func (f *MacOSFirewall) BlockIP(ctx context.Context, ip string, reason string, s
 }
 
 func (f *MacOSFirewall) addBlockedIPToFile(ip string) error {
-	file, err := os.OpenFile(pfBlockedFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+	file, err := os.OpenFile(pfBlockedFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
 	if err != nil {
 		return err
 	}

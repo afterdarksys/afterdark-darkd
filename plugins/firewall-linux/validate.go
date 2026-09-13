@@ -47,7 +47,9 @@ func validateFirewallRule(rule *sdk.FirewallRule) error {
 }
 
 func validateFirewallAddress(value string) error {
-	value = strings.TrimSpace(value)
+	if value != strings.TrimSpace(value) {
+		return fmt.Errorf("whitespace is not allowed")
+	}
 	if value == "" || value == "any" {
 		return nil
 	}
@@ -65,7 +67,9 @@ func hasPort(value string) bool {
 }
 
 func validateFirewallPort(value string) error {
-	value = strings.TrimSpace(value)
+	if value != strings.TrimSpace(value) {
+		return fmt.Errorf("whitespace is not allowed")
+	}
 	if value == "" || value == "any" {
 		return nil
 	}

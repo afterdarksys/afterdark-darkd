@@ -171,6 +171,9 @@ func New(agentVersion string) *AutoConfig {
 	return &AutoConfig{
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return fmt.Errorf("automatic configuration redirects are forbidden")
+			},
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 			},
@@ -625,7 +628,19 @@ func validateAPIEndpoint(endpoint string) error {
 	if port := u.Port(); port != "" && port != "443" {
 		return fmt.Errorf("endpoint must use HTTPS port 443")
 	}
+	if u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		return fmt.Errorf("endpoint must be an origin without path, query, or fragment")
+	}
 	host := strings.ToLower(u.Hostname())
+	allowed := host == "api.afterdark.io"
+	for _, candidate := range strings.Split(os.Getenv("AFTERDARK_ALLOWED_API_HOSTS"), ",") {
+		if candidate = strings.TrimSpace(candidate); candidate != "" && strings.EqualFold(host, candidate) {
+			allowed = true
+		}
+	}
+	if !allowed {
+		return fmt.Errorf("endpoint host is not allowlisted")
+	}
 	if host == "localhost" || strings.HasSuffix(host, ".localhost") || net.ParseIP(host) != nil {
 		return fmt.Errorf("endpoint host must not be localhost or an IP literal")
 	}
@@ -643,12 +658,8 @@ func validateAPIEndpoint(endpoint string) error {
 
 func verifySignedConfig(body []byte, signatureText string) error {
 	keyText := strings.TrimSpace(os.Getenv("AFTERDARK_CONFIG_PUBLIC_KEY"))
-	require := os.Getenv("AFTERDARK_REQUIRE_SIGNED_CONFIG") == "1"
 	if keyText == "" {
-		if require {
-			return fmt.Errorf("signed configuration public key is required")
-		}
-		return nil
+		return fmt.Errorf("signed configuration public key is required")
 	}
 	key, err := base64.StdEncoding.DecodeString(keyText)
 	if err != nil || len(key) != ed25519.PublicKeySize {
