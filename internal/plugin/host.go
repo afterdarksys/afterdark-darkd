@@ -8,8 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/hashicorp/go-hclog"
@@ -88,18 +89,24 @@ func (h *Host) DiscoverPlugins() ([]string, error) {
 		}
 
 		path := filepath.Join(h.pluginDir, entry.Name())
-		info, err := os.Stat(path)
+		info, err := os.Lstat(path)
 		if err != nil {
 			continue
 		}
 
 		// Check if executable
-		if info.Mode()&0111 == 0 {
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		if runtime.GOOS == "windows" && !strings.EqualFold(filepath.Ext(path), ".exe") {
+			continue
+		}
+		if runtime.GOOS != "windows" && info.Mode()&0111 == 0 {
 			continue
 		}
 
 		// Reject world- or group-writable plugins
-		if info.Mode()&0022 != 0 {
+		if runtime.GOOS != "windows" && info.Mode()&0022 != 0 {
 			h.logger.Warn("rejecting plugin with unsafe permissions",
 				zap.String("path", path),
 				zap.String("mode", info.Mode().String()),
@@ -107,14 +114,9 @@ func (h *Host) DiscoverPlugins() ([]string, error) {
 			continue
 		}
 
-		// Only execute plugins owned by root (uid 0)
-		if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-			if stat.Uid != 0 {
-				h.logger.Warn("rejecting plugin not owned by root",
-					zap.String("path", path),
-				)
-				continue
-			}
+		if err := validatePluginOwner(path, info); err != nil {
+			h.logger.Warn("rejecting untrusted plugin", zap.String("path", path), zap.Error(err))
+			continue
 		}
 
 		plugins = append(plugins, path)

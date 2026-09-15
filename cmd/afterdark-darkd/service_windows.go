@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"golang.org/x/sys/windows/svc"
+	svcdebug "golang.org/x/sys/windows/svc/debug"
 	"golang.org/x/sys/windows/svc/eventlog"
 )
 
@@ -41,7 +42,7 @@ func runWindowsService() error {
 
 	run := svc.Run
 	if debugService {
-		run = debug.Run
+		run = svcdebug.Run
 	}
 
 	err = run(svcName, &afterdarkService{elog: elog})
@@ -61,9 +62,9 @@ type afterdarkService struct {
 }
 
 func (m *afterdarkService) Execute(args []string, r <-chan svc.ChangeRequest, s chan<- svc.Status) (bool, uint32) {
-	const cmdsAccepted = svc.AcceptStop | svc.AcceptShutdown | svc.AcceptParamChange
+	const cmdsAccepted = svc.AcceptStop | svc.AcceptShutdown
 
-	s <- svc.Status{State: svc.StartPending}
+	s <- svc.Status{State: svc.StartPending, WaitHint: 60000}
 
 	// Create context for the daemon
 	ctx, cancel := context.WithCancel(context.Background())
@@ -71,10 +72,20 @@ func (m *afterdarkService) Execute(args []string, r <-chan svc.ChangeRequest, s 
 
 	// Start daemon in a goroutine
 	errCh := make(chan error, 1)
+	ready := make(chan struct{})
 	go func() {
-		errCh <- runDaemonWithContext(ctx)
+		errCh <- runDaemonWithReady(ctx, func() { close(ready) })
 	}()
 
+	// Wait for daemon readiness before telling SCM the service is running.
+	select {
+	case <-ready:
+	case err := <-errCh:
+		if err != nil {
+			m.elog.Error(1, err.Error())
+		}
+		return false, 1
+	}
 	s <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
 
 loop:
@@ -89,12 +100,21 @@ loop:
 				s <- c.CurrentStatus
 			case svc.Stop, svc.Shutdown:
 				m.elog.Info(1, "Service stopping")
-				s <- svc.Status{State: svc.StopPending}
-				cancel() // Stop the daemon
+				s <- svc.Status{State: svc.StopPending, WaitHint: 35000}
+				cancel()
+				timer := time.NewTimer(35 * time.Second)
+				defer timer.Stop()
+				select {
+				case err := <-errCh:
+					if err != nil {
+						return false, 1
+					}
+				case <-timer.C:
+					return false, 1
+				}
 				break loop
 			case svc.ParamChange:
-				m.elog.Info(1, "Service params updated")
-				// Reload config if possible
+				m.elog.Warning(1, "Live configuration reload is unsupported; restart the service")
 			default:
 				m.elog.Error(1, "Unexpected control request")
 			}

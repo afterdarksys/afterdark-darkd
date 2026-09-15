@@ -13,16 +13,46 @@ import (
 )
 
 // ListInstalledPatches returns a list of installed patches/updates
+// WUA queries are read-only and require the Windows Update service.
 func (p *Platform) ListInstalledPatches(ctx context.Context) ([]platform.Patch, error) {
-	// TODO: Implement using WMI or PSWindowsUpdate
-	// Get-WmiObject -Class Win32_QuickFixEngineering
-	return nil, fmt.Errorf("patch assessment is unavailable on windows")
+	return listUpdates(ctx, true)
 }
-
-// ListAvailablePatches returns a list of available updates
 func (p *Platform) ListAvailablePatches(ctx context.Context) ([]platform.Patch, error) {
-	// TODO: Implement using Windows Update Agent API or PSWindowsUpdate
-	return nil, fmt.Errorf("patch assessment is unavailable on windows")
+	return listUpdates(ctx, false)
+}
+func listUpdates(ctx context.Context, installed bool) ([]platform.Patch, error) {
+	flag := "0"
+	if installed {
+		flag = "1"
+	}
+	script := `$ErrorActionPreference='Stop'; $s=New-Object -ComObject Microsoft.Update.Session; $r=$s.CreateUpdateSearcher().Search('IsInstalled=` + flag + ` and IsHidden=0'); if($r.ResultCode -ne 2){throw 'Windows Update search incomplete'}; $items=@(foreach($u in $r.Updates){[pscustomobject]@{id=$u.Identity.UpdateID;name=$u.Title;severity=$u.MsrcSeverity;released=$u.LastDeploymentChangeTime.ToUniversalTime().ToString('o')}}); ConvertTo-Json -InputObject $items -Compress`
+	out, err := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script).Output()
+	if err != nil {
+		return nil, fmt.Errorf("Windows Update assessment: %w", err)
+	}
+	var rows []struct {
+		ID, Name, Severity string
+		Released           time.Time
+	}
+	if err := json.Unmarshal(out, &rows); err != nil {
+		return nil, fmt.Errorf("Windows Update response: %w", err)
+	}
+	patches := make([]platform.Patch, 0, len(rows))
+	for _, r := range rows {
+		sev := platform.SeverityUnknown
+		switch r.Severity {
+		case "Critical":
+			sev = platform.SeverityCritical
+		case "Important":
+			sev = platform.SeverityImportant
+		case "Moderate":
+			sev = platform.SeverityModerate
+		case "Low":
+			sev = platform.SeverityLow
+		}
+		patches = append(patches, platform.Patch{ID: r.ID, Name: r.Name, Severity: sev, ReleasedAt: r.Released})
+	}
+	return patches, nil
 }
 
 // InstallPatch installs a specific patch by ID

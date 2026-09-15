@@ -1,6 +1,11 @@
 package models
 
-import "time"
+import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"time"
+)
 
 // Config represents the daemon configuration
 type Config struct {
@@ -167,7 +172,7 @@ type IPCConfig struct {
 
 // DefaultConfig returns a configuration with sensible defaults
 func DefaultConfig() *Config {
-	return &Config{
+	cfg := &Config{
 		Daemon: DaemonConfig{
 			LogLevel:  "info",
 			DataDir:   "/var/lib/afterdark",
@@ -401,6 +406,21 @@ func DefaultConfig() *Config {
 			AuthTokenFile: "/var/lib/afterdark/.auth_token",
 		},
 	}
+	if runtime.GOOS == "windows" {
+		base := os.Getenv("PROGRAMDATA")
+		if base == "" {
+			base = `C:\ProgramData`
+		}
+		base = filepath.Join(base, "AfterDark")
+		cfg.Daemon.DataDir = base
+		cfg.Daemon.PIDFile = ""
+		cfg.Daemon.PluginDir = filepath.Join(base, "plugins")
+		cfg.Storage.Path = filepath.Join(base, "data")
+		cfg.IPC.SocketPath = `\\.\pipe\afterdark-darkd`
+		cfg.IPC.AuthTokenFile = filepath.Join(base, ".auth_token")
+	}
+	return cfg
+
 }
 
 // IntegrityConfig holds integrity monitoring configuration

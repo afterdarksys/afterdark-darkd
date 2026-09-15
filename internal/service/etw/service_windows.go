@@ -4,6 +4,8 @@ package etw
 
 import (
 	"context"
+	native "github.com/0xrawsec/golang-etw/etw"
+	"github.com/afterdarksys/afterdark-darkd/internal/events"
 	"time"
 
 	"github.com/afterdarksys/afterdark-darkd/internal/platform/windows/etw"
@@ -46,6 +48,11 @@ func (s *Service) Start(ctx context.Context) error {
 	s.logger.Info("Starting ETW monitor service")
 
 	s.session = etw.NewSession("AfterDark-Kernel-Trace", s.logger)
+	s.session.Handler = func(e *native.Event) {
+		if err := events.Emit(s.registry, ServiceName, "windows.etw", "info", e); err != nil {
+			s.logger.Warn("ETW event rejected", zap.Error(err))
+		}
+	}
 	if err := s.session.Start(); err != nil {
 		s.logger.Error("Failed to start ETW session", zap.Error(err))
 		// Don't fail the whole daemon, just log error
@@ -73,7 +80,7 @@ func (s *Service) Health() service.HealthStatus {
 	msg := "ETW session active"
 
 	// Basic check if session is active (simplified)
-	if s.session == nil {
+	if s.session == nil || !s.session.Healthy() {
 		status = service.HealthUnhealthy
 		msg = "session not initialized"
 	}

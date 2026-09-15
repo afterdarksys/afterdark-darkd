@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -72,7 +73,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		SocketPath:     socketPath,
 		PipeName:       DefaultWindowsPipeName,
-		AuthTokenPath:  "/var/lib/afterdark/.auth_token",
+		AuthTokenPath:  defaultTokenPath(),
 		RequireAuth:    true,
 		MaxConnections: 100,
 	}
@@ -230,7 +231,7 @@ func (s *Server) Address() string {
 
 // createListener creates the appropriate listener for the platform
 func (s *Server) createListener() (net.Listener, error) {
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == "windows" && s.config.TCPAddr == "" {
 		// Windows named pipe
 		return s.createWindowsListener()
 	}
@@ -249,7 +250,7 @@ func (s *Server) createListener() (net.Listener, error) {
 func (s *Server) createTCPListener() (net.Listener, error) {
 	certDir := s.config.CertDir
 	if certDir == "" {
-		certDir = "/var/lib/afterdark/ipc-tls"
+		certDir = filepath.Join(filepath.Dir(defaultTokenPath()), "ipc-tls")
 	}
 
 	tlsCert, _, err := ensureServerCert(certDir)
@@ -309,12 +310,6 @@ func (s *Server) createUnixListener() (net.Listener, error) {
 }
 
 // createWindowsListener creates a Windows named pipe listener
-func (s *Server) createWindowsListener() (net.Listener, error) {
-	// For Windows, we use a TCP listener on localhost as a fallback
-	// In production, you'd use github.com/Microsoft/go-winio for named pipes
-	return net.Listen("tcp", "127.0.0.1:0")
-}
-
 // loadAuthToken loads the authentication token from disk
 func (s *Server) loadAuthToken() error {
 	data, err := os.ReadFile(s.config.AuthTokenPath)
@@ -475,21 +470,24 @@ func Dial(ctx context.Context, socketPath string) (*grpc.ClientConn, error) {
 func DialWithCertDir(ctx context.Context, socketPath, certDir string) (*grpc.ClientConn, error) {
 	if socketPath == "" {
 		if runtime.GOOS == "windows" {
-			socketPath = "127.0.0.1:0"
+			socketPath = DefaultWindowsPipeName
 		} else {
 			socketPath = DefaultSocketPath
 		}
 	}
 
+	if runtime.GOOS == "windows" && strings.HasPrefix(socketPath, `\\.\pipe\`) {
+		return dialWindowsPipe(ctx, socketPath)
+	}
 	var target string
-	var opts []grpc.DialOption
+	opts := authDialOptions()
 
 	isTCP := runtime.GOOS == "windows" || (len(socketPath) > 0 && socketPath[0] != '/')
 
 	if isTCP {
 		target = socketPath
 		if certDir == "" {
-			certDir = "/var/lib/afterdark/ipc-tls"
+			certDir = filepath.Join(filepath.Dir(defaultTokenPath()), "ipc-tls")
 		}
 		tlsCfg, err := loadClientTLSConfig(certDir)
 		if err != nil {

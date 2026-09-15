@@ -32,6 +32,7 @@ require (
 	fyne.io/systray v1.12.0 // indirect
 	github.com/0xrawsec/golang-utils v1.3.1 // indirect
 	github.com/BurntSushi/toml v1.5.0 // indirect
+	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fatih/color v1.13.0 // indirect

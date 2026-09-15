@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"runtime"
 	"syscall"
 
 	"github.com/afterdarksys/afterdark-darkd/internal/daemon"
@@ -57,7 +59,7 @@ and baseline security assessments across macOS, Windows, and Linux systems.`,
 		},
 	}
 
-	rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", "/etc/afterdark/darkd.yaml", "path to configuration file")
+	rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", defaultConfigPath(), "path to configuration file")
 	rootCmd.PersistentFlags().StringVarP(&logLevel, "log-level", "l", "info", "log level (debug, info, warn, error)")
 	rootCmd.PersistentFlags().StringVar(&remoteAccess, "remote", "Enabled", "remote access mode (Enabled, Disabled, Restricted)")
 
@@ -790,7 +792,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	return runDaemonWithContext(ctx)
 }
 
-func runDaemonWithContext(ctx context.Context) error {
+func runDaemonWithContext(ctx context.Context) error { return runDaemonWithReady(ctx, nil) }
+
+func runDaemonWithReady(ctx context.Context, ready func()) error {
 	// Initialize logging
 	logFormat := "json"
 	if foreground || debug {
@@ -866,6 +870,7 @@ func runDaemonWithContext(ctx context.Context) error {
 		return fmt.Errorf("failed to create daemon: %w", err)
 	}
 
+	d.OnReady = ready
 	// Run daemon
 	if err := d.Run(ctx); err != nil {
 		logger.Error("daemon error", zap.Error(err))
@@ -874,4 +879,11 @@ func runDaemonWithContext(ctx context.Context) error {
 
 	logger.Info("daemon shutdown complete")
 	return nil
+}
+
+func defaultConfigPath() string {
+	if runtime.GOOS == "windows" {
+		return filepath.Join(models.DefaultConfig().Daemon.DataDir, "darkd.yaml")
+	}
+	return "/etc/afterdark/darkd.yaml"
 }

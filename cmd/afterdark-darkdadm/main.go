@@ -48,7 +48,7 @@ Use 'darkdadm api' for direct API operations.`,
 		Version: fmt.Sprintf("%s (commit: %s, built: %s)", Version, Commit, BuildTime),
 	}
 
-	rootCmd.PersistentFlags().StringVarP(&socketPath, "socket", "s", "/var/run/afterdark/darkd.sock", "path to daemon socket")
+	rootCmd.PersistentFlags().StringVarP(&socketPath, "socket", "s", "", "path to daemon socket (platform default when empty)")
 	rootCmd.PersistentFlags().StringVar(&apiURL, "api-url", "https://api.afterdarksys.com", "AfterDark API URL")
 	rootCmd.PersistentFlags().BoolVar(&outputJSON, "json", false, "output in JSON format")
 

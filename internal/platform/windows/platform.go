@@ -152,7 +152,7 @@ func (p *Platform) SetDNSServers(servers []string) error {
 		for i, s := range servers[1:] {
 			_ = exec.CommandContext(context.Background(),
 				"netsh", "interface", "ip", "add", "dns",
-				iface.Name, s, strings.Join([]string{"index=", string(rune('2'+i))}, "")).Run()
+				iface.Name, s, strings.Join([]string{"index=", string(rune('2' + i))}, "")).Run()
 		}
 	}
 	if applied == 0 && lastErr != nil {

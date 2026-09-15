@@ -48,6 +48,7 @@ func (s State) String() string {
 
 // Daemon represents the main daemon process
 type Daemon struct {
+	OnReady  func()
 	config   *models.Config
 	registry *service.Registry
 	state    State
@@ -93,6 +94,7 @@ func New(cfg *models.Config) (*Daemon, error) {
 		AuthTokenPath:  cfg.IPC.AuthTokenFile,
 		RequireAuth:    cfg.IPC.AuthEnabled,
 		TCPAddr:        cfg.IPC.TCPAddr,
+		PipeName:       cfg.IPC.SocketPath,
 		MaxConnections: 100, // could be config
 	}
 
@@ -205,6 +207,9 @@ func (d *Daemon) Start(ctx context.Context) (err error) {
 		zap.String("tcp", d.config.IPC.TCPAddr))
 
 	d.setState(StateRunning)
+	if d.OnReady != nil {
+		d.OnReady()
+	}
 	d.logger.Info("daemon started successfully",
 		zap.Int("plugins_loaded", len(d.pluginHost.ListPlugins())),
 	)
