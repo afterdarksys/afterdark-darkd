@@ -97,11 +97,11 @@ func parseAvailableUpdates(output []byte) ([]platform.Patch, error) {
 			// Start new patch
 			label := strings.TrimSpace(matches[1])
 			currentPatch = &platform.Patch{
-				ID:         label,
-				Name:       label,
-				ReleasedAt: time.Now(), // Will be updated if we can find release date
-				Category:   determineCategoryFromName(label),
-				Severity:   determineSeverityFromName(label),
+				ID:   label,
+				Name: label,
+				// Release date unavailable from softwareupdate; preserve unknown.
+				Category: determineCategoryFromName(label),
+				Severity: determineSeverityFromName(label),
 			}
 			continue
 		}

@@ -2,6 +2,8 @@ package patch
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -18,32 +20,35 @@ const ServiceName = "patch_monitor"
 
 // Service implements the patch monitoring service
 type Service struct {
-	config     *models.PatchMonitorConfig
-	platform   platform.Platform
-	store      storage.Store
-	apiClient  *afterdark.Client
-	logger     *zap.Logger
+	config    *models.PatchMonitorConfig
+	platform  platform.Platform
+	store     storage.Store
+	apiClient *afterdark.Client
+	logger    *zap.Logger
 
-	mu            sync.RWMutex
-	lastScan      time.Time
-	compliance    *ComplianceStatus
+	mu             sync.RWMutex
+	lastScan       time.Time
+	compliance     *ComplianceStatus
 	missingPatches []platform.Patch
+	firstObserved  map[string]time.Time
 
 	// Control channels
-	stopCh   chan struct{}
-	doneCh   chan struct{}
-	scanCh   chan struct{}
+	stopCh chan struct{}
+	doneCh chan struct{}
+	scanCh chan struct{}
 }
 
 // ComplianceStatus represents the current compliance state
 type ComplianceStatus struct {
-	Compliant       bool      `json:"compliant"`
-	LastScan        time.Time `json:"last_scan"`
-	NextScan        time.Time `json:"next_scan"`
-	CriticalMissing int       `json:"critical_missing"`
-	ImportantMissing int      `json:"important_missing"`
-	TotalMissing    int       `json:"total_missing"`
-	UrgentActions   []UrgentAction `json:"urgent_actions,omitempty"`
+	Valid            bool           `json:"valid"`
+	Reason           string         `json:"reason,omitempty"`
+	Compliant        bool           `json:"compliant"`
+	LastScan         time.Time      `json:"last_scan"`
+	NextScan         time.Time      `json:"next_scan"`
+	CriticalMissing  int            `json:"critical_missing"`
+	ImportantMissing int            `json:"important_missing"`
+	TotalMissing     int            `json:"total_missing"`
+	UrgentActions    []UrgentAction `json:"urgent_actions,omitempty"`
 }
 
 // UrgentAction represents an urgent patch action needed
@@ -57,15 +62,16 @@ type UrgentAction struct {
 // New creates a new patch monitor service
 func New(cfg *models.PatchMonitorConfig, plat platform.Platform, store storage.Store, apiClient *afterdark.Client) *Service {
 	return &Service{
-		config:    cfg,
-		platform:  plat,
-		store:     store,
-		apiClient: apiClient,
-		logger:    logging.With(zap.String("service", ServiceName)),
-		stopCh:    make(chan struct{}),
-		doneCh:    make(chan struct{}),
-		scanCh:    make(chan struct{}, 1),
-		compliance: &ComplianceStatus{},
+		config:        cfg,
+		platform:      plat,
+		store:         store,
+		apiClient:     apiClient,
+		logger:        logging.With(zap.String("service", ServiceName)),
+		stopCh:        make(chan struct{}),
+		doneCh:        make(chan struct{}),
+		scanCh:        make(chan struct{}, 1),
+		compliance:    &ComplianceStatus{Reason: "not scanned"},
+		firstObserved: make(map[string]time.Time),
 	}
 }
 
@@ -76,6 +82,18 @@ func (s *Service) Name() string {
 
 // Start starts the patch monitor service
 func (s *Service) Start(ctx context.Context) error {
+	if s.store == nil || s.platform == nil {
+		return fmt.Errorf("patch monitor requires storage and platform")
+	}
+	if s.config.ScanInterval <= 0 {
+		return fmt.Errorf("scan interval must be positive")
+	}
+	if err := s.store.Load(ctx, "patch_state", "first_observed", &s.firstObserved); err != nil && !errors.Is(err, storage.ErrNotFound) {
+		return fmt.Errorf("load patch deadlines: %w", err)
+	}
+	if s.firstObserved == nil {
+		s.firstObserved = make(map[string]time.Time)
+	}
 	s.logger.Info("starting patch monitor service")
 
 	go s.run(ctx)
@@ -107,6 +125,10 @@ func (s *Service) Health() service.HealthStatus {
 	status := service.HealthHealthy
 	message := "healthy"
 
+	if !s.compliance.Valid {
+		status = service.HealthDegraded
+		message = s.compliance.Reason
+	}
 	if time.Since(s.lastScan) > s.config.ScanInterval*2 {
 		status = service.HealthDegraded
 		message = "scan overdue"
@@ -147,7 +169,9 @@ func (s *Service) TriggerScan() {
 func (s *Service) GetComplianceStatus() *ComplianceStatus {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.compliance
+	copy := *s.compliance
+	copy.UrgentActions = append([]UrgentAction(nil), s.compliance.UrgentActions...)
+	return &copy
 }
 
 // GetMissingPatches returns the list of missing patches
@@ -186,6 +210,7 @@ func (s *Service) performScan(ctx context.Context) {
 	// Get available patches from platform
 	available, err := s.platform.ListAvailablePatches(ctx)
 	if err != nil {
+		s.invalidate(err)
 		s.logger.Error("failed to list available patches", zap.Error(err))
 		return
 	}
@@ -193,6 +218,7 @@ func (s *Service) performScan(ctx context.Context) {
 	// Get installed patches
 	installed, err := s.platform.ListInstalledPatches(ctx)
 	if err != nil {
+		s.invalidate(err)
 		s.logger.Error("failed to list installed patches", zap.Error(err))
 		return
 	}
@@ -211,6 +237,15 @@ func (s *Service) performScan(ctx context.Context) {
 		}
 	}
 
+	for _, p := range missing {
+		if s.firstObserved[p.ID].IsZero() {
+			s.firstObserved[p.ID] = startTime
+		}
+	}
+	if err := s.store.Save(ctx, "patch_state", "first_observed", s.firstObserved); err != nil {
+		s.invalidate(err)
+		return
+	}
 	// Classify urgency and build compliance status
 	compliance := s.buildComplianceStatus(missing)
 
@@ -223,12 +258,12 @@ func (s *Service) performScan(ctx context.Context) {
 
 	// Save to storage
 	scanResult := map[string]interface{}{
-		"timestamp":        startTime,
-		"duration_ms":      time.Since(startTime).Milliseconds(),
-		"installed_count":  len(installed),
-		"available_count":  len(available),
-		"missing_count":    len(missing),
-		"compliance":       compliance,
+		"timestamp":       startTime,
+		"duration_ms":     time.Since(startTime).Milliseconds(),
+		"installed_count": len(installed),
+		"available_count": len(available),
+		"missing_count":   len(missing),
+		"compliance":      compliance,
 	}
 
 	if err := s.store.Save(ctx, "scans", startTime.Format("20060102-150405"), scanResult); err != nil {
@@ -239,20 +274,20 @@ func (s *Service) performScan(ctx context.Context) {
 	if s.apiClient != nil {
 		hostname, _ := s.platform.GetHostname()
 		osInfo, err := s.platform.GetOSInfo()
-		
+
 		var osFamily, osVer, kernVer string
 		if err == nil && osInfo != nil {
 			osFamily = osInfo.Name
 			osVer = osInfo.Version
 			kernVer = osInfo.Kernel
 		}
-		
+
 		apps, appErr := s.platform.ListInstalledApplications(ctx)
 		if appErr != nil {
 			s.logger.Warn("failed to list installed applications for telemetry", zap.Error(appErr))
 			apps = []platform.Application{} // Safe default
 		}
-		
+
 		var installedPatchIDs []string
 		for _, idx := range installed {
 			installedPatchIDs = append(installedPatchIDs, idx.ID)
@@ -267,7 +302,7 @@ func (s *Service) performScan(ctx context.Context) {
 			InstalledPatches: installedPatchIDs,
 			SoftwareCatalog:  apps,
 		}
-		
+
 		if err := s.apiClient.ReportTelemetry(ctx, telemetry); err != nil {
 			s.logger.Error("failed to submit telemetry report to DarkAPI", zap.Error(err))
 		} else {
@@ -287,6 +322,7 @@ func (s *Service) performScan(ctx context.Context) {
 func (s *Service) buildComplianceStatus(missing []platform.Patch) *ComplianceStatus {
 	status := &ComplianceStatus{
 		Compliant:    true,
+		Valid:        true,
 		LastScan:     time.Now(),
 		NextScan:     time.Now().Add(s.config.ScanInterval),
 		TotalMissing: len(missing),
@@ -305,7 +341,17 @@ func (s *Service) buildComplianceStatus(missing []platform.Patch) *ComplianceSta
 
 		// Determine urgency
 		urgency := s.getUrgencyForPatch(p)
-		dueBy := p.ReleasedAt.Add(urgency)
+		basis := p.ReleasedAt
+		if basis.IsZero() {
+			basis = s.firstObserved[p.ID]
+		}
+		if basis.IsZero() {
+			status.Valid = false
+			status.Compliant = false
+			status.Reason = "missing patch deadline basis"
+			continue
+		}
+		dueBy := basis.Add(urgency)
 
 		if now.After(dueBy) {
 			status.Compliant = false
@@ -355,4 +401,10 @@ func (s *Service) getUrgencyReason(p platform.Patch) string {
 		return "Network-related patch"
 	}
 	return "Software update"
+}
+
+func (s *Service) invalidate(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.compliance = &ComplianceStatus{Reason: err.Error()}
 }

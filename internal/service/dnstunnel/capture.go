@@ -3,6 +3,8 @@ package dnstunnel
 import (
 	"bufio"
 	"context"
+	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strings"
@@ -65,30 +67,20 @@ func (c *LogCapture) watchLogs(ctx context.Context) {
 
 // tailLog tails a log file for DNS queries
 func (c *LogCapture) tailLog(ctx context.Context, path string) {
-	// DNS query patterns for common resolvers
 	patterns := []*regexp.Regexp{
-		// systemd-resolved
 		regexp.MustCompile(`query\[(\w+)\]\s+(\S+)\s+from`),
-		// dnsmasq
-		regexp.MustCompile(`query\[(\w+)\]\s+(\S+)\s+from`),
-		// BIND
 		regexp.MustCompile(`client.*query:\s+(\S+)\s+IN\s+(\w+)`),
 	}
-
 	file, err := os.Open(path)
 	if err != nil {
-		c.logger.Debug("could not open log file", zap.String("path", path), zap.Error(err))
 		return
 	}
-	defer file.Close()
-
-	// Seek to end
-	file.Seek(0, 2)
-
-	scanner := bufio.NewScanner(file)
+	defer func() { file.Close() }()
+	file.Seek(0, io.SeekEnd)
+	reader := bufio.NewReader(file)
+	var pending string
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -96,14 +88,45 @@ func (c *LogCapture) tailLog(ctx context.Context, path string) {
 		case <-c.stopChan:
 			return
 		case <-ticker.C:
-			for scanner.Scan() {
-				line := scanner.Text()
-				if query := c.parseLogLine(line, patterns); query != nil {
-					select {
-					case c.queries <- *query:
-					default:
-						// Channel full, drop query
+			current, err := os.Stat(path)
+			if err != nil {
+				continue
+			}
+			opened, err := file.Stat()
+			if err != nil {
+				return
+			}
+			offset, _ := file.Seek(0, io.SeekCurrent)
+			if !os.SameFile(current, opened) || current.Size() < offset {
+				next, err := os.Open(path)
+				if err != nil {
+					continue
+				}
+				file.Close()
+				file = next
+				reader.Reset(file)
+				pending = ""
+			}
+			for {
+				line, err := reader.ReadString('\n')
+				pending += line
+				if len(pending) > 65536 {
+					pending = ""
+				}
+				if err == nil {
+					if q := c.parseLogLine(pending, patterns); q != nil {
+						select {
+						case c.queries <- *q:
+						default:
+						}
 					}
+					pending = ""
+				}
+				if err != nil {
+					if err != io.EOF {
+						return
+					}
+					break
 				}
 			}
 		}
@@ -115,6 +138,9 @@ func (c *LogCapture) parseLogLine(line string, patterns []*regexp.Regexp) *model
 	for _, pattern := range patterns {
 		matches := pattern.FindStringSubmatch(line)
 		if len(matches) >= 3 {
+			if strings.HasPrefix(pattern.String(), "client") {
+				matches[1], matches[2] = matches[2], matches[1]
+			}
 			return &models.TunnelDNSQuery{
 				Timestamp:    time.Now(),
 				Domain:       strings.TrimSuffix(matches[2], "."),
@@ -146,8 +172,7 @@ func NewPcapCapture(logger *zap.Logger) (*PcapCapture, error) {
 func (c *PcapCapture) Start(ctx context.Context) error {
 	// Note: Full pcap implementation requires CGO and libpcap
 	// This is a placeholder - real implementation would use gopacket
-	c.logger.Info("pcap capture started (placeholder)")
-	return nil
+	return fmt.Errorf("pcap DNS capture is not implemented")
 }
 
 // Stop stops the capture
@@ -181,8 +206,7 @@ func NewETWCapture(logger *zap.Logger) (*ETWCapture, error) {
 func (c *ETWCapture) Start(ctx context.Context) error {
 	// Note: ETW implementation requires Windows-specific code
 	// This is a placeholder
-	c.logger.Info("ETW capture started (placeholder - Windows only)")
-	return nil
+	return fmt.Errorf("DNS ETW capture is not implemented")
 }
 
 // Stop stops the capture

@@ -16,13 +16,13 @@ func (p *Platform) ListInstalledPatches(ctx context.Context) ([]platform.Patch, 
 	// TODO: Implement using apt/yum/dnf logs or queries
 	// Debian/Ubuntu: grep " install " /var/log/dpkg.log
 	// RHEL: rpm -qa --last
-	return []platform.Patch{}, nil
+	return nil, fmt.Errorf("patch assessment is unavailable on linux")
 }
 
 // ListAvailablePatches returns a list of available updates
 func (p *Platform) ListAvailablePatches(ctx context.Context) ([]platform.Patch, error) {
 	// TODO: Implement using apt-get -s upgrade or yum check-update
-	return []platform.Patch{}, nil
+	return nil, fmt.Errorf("patch assessment is unavailable on linux")
 }
 
 // InstallPatch installs a specific patch by ID

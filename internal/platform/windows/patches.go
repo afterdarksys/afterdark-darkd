@@ -16,13 +16,13 @@ import (
 func (p *Platform) ListInstalledPatches(ctx context.Context) ([]platform.Patch, error) {
 	// TODO: Implement using WMI or PSWindowsUpdate
 	// Get-WmiObject -Class Win32_QuickFixEngineering
-	return []platform.Patch{}, nil
+	return nil, fmt.Errorf("patch assessment is unavailable on windows")
 }
 
 // ListAvailablePatches returns a list of available updates
 func (p *Platform) ListAvailablePatches(ctx context.Context) ([]platform.Patch, error) {
 	// TODO: Implement using Windows Update Agent API or PSWindowsUpdate
-	return []platform.Patch{}, nil
+	return nil, fmt.Errorf("patch assessment is unavailable on windows")
 }
 
 // InstallPatch installs a specific patch by ID
@@ -64,12 +64,12 @@ func (p *Platform) ListInstalledApplications(ctx context.Context) ([]platform.Ap
 		if pa.DisplayName == "" {
 			continue
 		}
-		
+
 		var installed time.Time
 		if len(pa.InstallDate) == 8 {
 			installed, _ = time.Parse("20060102", pa.InstallDate)
 		}
-		
+
 		apps = append(apps, platform.Application{
 			Name:        pa.DisplayName,
 			Version:     pa.DisplayVersion,

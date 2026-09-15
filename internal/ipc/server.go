@@ -601,6 +601,9 @@ func (s *Server) GetCompliance(ctx context.Context, req *pb.GetComplianceRequest
 	}
 
 	c := patchSvc.GetComplianceStatus()
+	if !c.Valid {
+		return nil, status.Error(codes.Unavailable, c.Reason)
+	}
 
 	return &pb.ComplianceResponse{
 		Compliant:        c.Compliant,
