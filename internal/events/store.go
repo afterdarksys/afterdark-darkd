@@ -22,15 +22,24 @@ const MaxEvents = 10000
 
 // Event retains a stable ID across retries. Data holds source-specific fields.
 type Event struct {
-	ID       string          `json:"id"`
-	Version  int             `json:"version"`
-	Endpoint string          `json:"endpoint_id"`
-	Session  string          `json:"session_id"`
-	Time     time.Time       `json:"time"`
-	Source   string          `json:"source"`
-	Type     string          `json:"type"`
-	Severity string          `json:"severity"`
-	Data     json.RawMessage `json:"data"`
+	CorrelationID    string          `json:"correlation_id,omitempty"`
+	SchemaVersion    int             `json:"schema_version,omitempty"`
+	BootID           string          `json:"boot_id,omitempty"`
+	StreamID         string          `json:"stream_id,omitempty"`
+	Sequence         int64           `json:"sequence,omitempty"`
+	AgentVersion     string          `json:"agent_version,omitempty"`
+	CollectionStatus string          `json:"collection_status,omitempty"`
+	Entities         map[string]any  `json:"entities,omitempty"`
+	Facts            map[string]any  `json:"facts,omitempty"`
+	ID               string          `json:"id"`
+	Version          int             `json:"version"`
+	Endpoint         string          `json:"endpoint_id"`
+	Session          string          `json:"session_id"`
+	Time             time.Time       `json:"time"`
+	Source           string          `json:"source"`
+	Type             string          `json:"type"`
+	Severity         string          `json:"severity"`
+	Data             json.RawMessage `json:"data"`
 }
 type Store struct {
 	mu                      sync.Mutex
@@ -68,8 +77,14 @@ func (s *Store) Start(ctx context.Context) error {
 		return err
 	}
 	db.SetMaxOpenConns(1)
-	for _, q := range []string{"PRAGMA busy_timeout=5000", "PRAGMA journal_mode=WAL", "PRAGMA synchronous=FULL", `CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,time INTEGER NOT NULL,kind TEXT NOT NULL,severity TEXT NOT NULL,payload BLOB NOT NULL,delivered INTEGER NOT NULL DEFAULT 0)`, `CREATE INDEX IF NOT EXISTS events_pending ON events(delivered,seq)`, "PRAGMA user_version=1"} {
+	for _, q := range []string{"PRAGMA busy_timeout=5000", "PRAGMA journal_mode=WAL", "PRAGMA synchronous=FULL", `CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,time INTEGER NOT NULL,kind TEXT NOT NULL,severity TEXT NOT NULL,payload BLOB NOT NULL,delivered INTEGER NOT NULL DEFAULT 0)`, `CREATE INDEX IF NOT EXISTS events_pending ON events(delivered,seq)`, `CREATE TABLE IF NOT EXISTS event_metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL)`, "PRAGMA user_version=1"} {
 		if _, err = db.ExecContext(ctx, q); err != nil {
+			db.Close()
+			return err
+		}
+	}
+	for key, value := range map[string]string{"stream_id": uuid.NewString(), "sequence": "0"} {
+		if _, err = db.ExecContext(ctx, "INSERT OR IGNORE INTO event_metadata(key,value) VALUES(?,?)", key, value); err != nil {
 			db.Close()
 			return err
 		}
@@ -110,7 +125,18 @@ func (s *Store) Publish(ctx context.Context, e Event) error {
 	if e.ID == "" {
 		e.ID = uuid.NewString()
 	}
-	e.Version = 1
+	var exists int
+	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM events WHERE id=?", e.ID).Scan(&exists); err != nil {
+		return fail(err)
+	}
+	if exists > 0 {
+		return nil
+	}
+	e.Version = 1 // Preserve the existing event-store version field; schema_version governs the new envelope.
+	e.SchemaVersion = 2
+	e.BootID = reportBootID()
+	e.AgentVersion = reportAgentVersion()
+	e.CollectionStatus = "observed"
 	e.Endpoint = s.endpoint
 	e.Session = s.session
 	if e.Time.IsZero() {
@@ -122,6 +148,20 @@ func (s *Store) Publish(ctx context.Context, e Event) error {
 	if e.Source == "" || e.Type == "" {
 		return fail(fmt.Errorf("event source and type required"))
 	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fail(err)
+	}
+	defer tx.Rollback()
+	if err = tx.QueryRowContext(ctx, "SELECT value FROM event_metadata WHERE key='stream_id'").Scan(&e.StreamID); err != nil {
+		return fail(err)
+	}
+	if _, err = tx.ExecContext(ctx, "UPDATE event_metadata SET value=CAST(value AS INTEGER)+1 WHERE key='sequence'"); err != nil {
+		return fail(err)
+	}
+	if err = tx.QueryRowContext(ctx, "SELECT CAST(value AS INTEGER) FROM event_metadata WHERE key='sequence'").Scan(&e.Sequence); err != nil {
+		return fail(err)
+	}
 	payload, err := json.Marshal(e)
 	if err != nil {
 		return fail(err)
@@ -129,11 +169,6 @@ func (s *Store) Publish(ctx context.Context, e Event) error {
 	if len(payload) > MaxPayload {
 		return fail(fmt.Errorf("event exceeds payload limit"))
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fail(err)
-	}
-	defer tx.Rollback()
 	// Bound history; never evict unacknowledged evidence to admit another event.
 	var count int
 	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM events").Scan(&count); err != nil {

@@ -2,7 +2,9 @@ package events
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -36,5 +38,46 @@ func TestReplayAndDeduplicate(t *testing.T) {
 	batch, err = s.List(ctx, 10, true, time.Time{}, "", "")
 	if err != nil || len(batch) != 0 {
 		t.Fatal(batch, err)
+	}
+}
+
+func TestProvenanceSurvivesRestartAndFailedWrites(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "events.db")
+	s := New(path, "host")
+	if err := s.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	first := Event{ID: "one", Source: "fixture", Type: "process.exec"}
+	if err := s.Publish(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Publish(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	oversized, _ := json.Marshal(map[string]string{"value": strings.Repeat("x", MaxPayload)})
+	if err := s.Publish(ctx, Event{ID: "oversized", Source: "fixture", Type: "test", Data: oversized}); err == nil {
+		t.Fatal("expected size rejection")
+	}
+	s.Stop(ctx)
+	s = New(path, "host")
+	if err := s.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop(ctx)
+	if err := s.Publish(ctx, Event{ID: "two", Source: "fixture", Type: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.List(ctx, 10, true, time.Time{}, "", "")
+	if err != nil || len(rows) != 2 {
+		t.Fatal(rows, err)
+	}
+	byID := map[string]Event{}
+	for _, e := range rows {
+		byID[e.ID] = e
+	}
+	a, b := byID["one"], byID["two"]
+	if a.SchemaVersion != 2 || a.StreamID == "" || a.StreamID != b.StreamID || a.Sequence != 1 || b.Sequence != 2 || a.CollectionStatus != "observed" {
+		t.Fatalf("bad provenance: %+v %+v", a, b)
 	}
 }

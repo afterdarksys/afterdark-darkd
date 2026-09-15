@@ -1,0 +1,59 @@
+[
+  {
+    "device_id": "dev_fixture",
+    "app": "darkd",
+    "event_id": "12345678-1234-4234-8234-123456789010",
+    "event": {
+      "id": "12345678-1234-4234-8234-123456789010",
+      "schema_version": 2,
+      "boot_id": "boot-fixture",
+      "stream_id": "darkd-fixture",
+      "sequence": 1,
+      "agent_version": "fixture-v2",
+      "collection_status": "observed",
+      "time": "2026-09-14T12:00:00Z",
+      "type": "process.exec",
+      "source": "darkd",
+      "severity": "high",
+      "entities": {
+        "process": {
+          "pid": 42,
+          "start_time": "2026-09-14T11:00:00Z"
+        }
+      },
+      "facts": {
+        "unsigned": true
+      },
+      "data": {}
+    }
+  },
+  {
+    "device_id": "dev_fixture",
+    "app": "aftersec",
+    "event_id": "12345678-1234-4234-8234-123456789011",
+    "event": {
+      "id": "12345678-1234-4234-8234-123456789011",
+      "schema_version": 2,
+      "boot_id": "boot-fixture",
+      "stream_id": "aftersec-fixture",
+      "sequence": 1,
+      "agent_version": "fixture-v2",
+      "collection_status": "observed",
+      "time": "2026-09-14T12:00:01Z",
+      "type": "network.connection",
+      "source": "aftersec",
+      "severity": "high",
+      "entities": {
+        "process": {
+          "pid": 42,
+          "start_time": "2026-09-14T11:00:00Z"
+        }
+      },
+      "facts": {
+        "network_activity": true,
+        "suspicious_destination": true
+      },
+      "data": {}
+    }
+  }
+]
