@@ -15,6 +15,7 @@ import (
 	"time"
 
 	pb "github.com/afterdarksys/afterdark-darkd/api/proto/ipc"
+	"github.com/afterdarksys/afterdark-darkd/internal/events"
 	"github.com/afterdarksys/afterdark-darkd/internal/service"
 	"github.com/afterdarksys/afterdark-darkd/internal/service/patch"
 	"github.com/afterdarksys/afterdark-darkd/internal/service/threat"
@@ -834,7 +835,34 @@ func (s *Server) ListProcesses(ctx context.Context, req *pb.ListProcessesRequest
 
 // GetEvents returns events
 func (s *Server) GetEvents(ctx context.Context, req *pb.GetEventsRequest) (*pb.EventsResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "GetEvents is not available")
+	if s.registry == nil {
+		return nil, status.Error(codes.Unavailable, "event store unavailable")
+	}
+	store, ok := s.registry.Get(events.ServiceName).(*events.Store)
+	if !ok {
+		return nil, status.Error(codes.Unavailable, "event store unavailable")
+	}
+	var since time.Time
+	if req.Since != nil {
+		since = time.Unix(req.Since.Seconds, int64(req.Since.Nanos))
+	}
+	limit := int(req.GetLimit())
+	if limit <= 0 || limit > 999 {
+		limit = 100
+	}
+	records, err := store.List(ctx, limit+1, false, since, req.GetEventType(), req.GetSeverity())
+	if err != nil {
+		return nil, status.Error(codes.Unavailable, err.Error())
+	}
+	more := len(records) > limit
+	if more {
+		records = records[:limit]
+	}
+	out := &pb.EventsResponse{HasMore: more, TotalCount: int32(len(records))}
+	for _, e := range records {
+		out.Events = append(out.Events, &pb.Event{Id: e.ID, Type: e.Type, Severity: e.Severity, Source: e.Source, Timestamp: &pb.Timestamp{Seconds: e.Time.Unix(), Nanos: int32(e.Time.Nanosecond())}, Metadata: map[string]string{"data": string(e.Data), "endpoint_id": e.Endpoint, "session_id": e.Session}})
+	}
+	return out, nil
 }
 
 // StreamEvents streams events

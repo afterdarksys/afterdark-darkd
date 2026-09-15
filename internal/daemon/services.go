@@ -3,6 +3,9 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"github.com/afterdarksys/afterdark-darkd/internal/events"
+	"github.com/afterdarksys/afterdark-darkd/internal/identity"
+	"path/filepath"
 	"time"
 
 	"github.com/afterdarksys/afterdark-darkd/internal/api/afterdark"
@@ -80,6 +83,13 @@ func (d *Daemon) InitializeServices() error {
 		Timeout: cfg.API.DarkAPI.Timeout,
 	})
 
+	id, _, err := identity.GetOrCreateIdentity()
+	if err != nil {
+		return fmt.Errorf("endpoint identity: %w", err)
+	}
+	if err := d.registry.Register(events.New(filepath.Join(cfg.Storage.Path, "events.sqlite"), id.SystemID)); err != nil {
+		return err
+	}
 	// Register core services in dependency order
 
 	// 1. Network service (foundational)
@@ -93,6 +103,22 @@ func (d *Daemon) InitializeServices() error {
 	// 2. Connection tracker (depends on network)
 	if cfg.Services.NetworkMonitor.Enabled {
 		conntrackSvc := conntrack.New(&cfg.Services.NetworkMonitor.Tracking)
+		conntrackSvc.OnConnection = func(conn models.NetworkConnection) {
+			if c2, ok := d.registry.Get("c2_detection").(*C2DetectionService); ok {
+				key := fmt.Sprintf("%d/%s/%s/%d", conn.PID, conn.Protocol, conn.RemoteAddr, conn.RemotePort)
+				c2.analyzer.RecordConnection(key, &conn, int64(conn.BytesSent), int64(conn.BytesRecv))
+				tracked := &models.TrackedConnection{Key: models.ConnectionKey{Protocol: conn.Protocol, RemoteAddr: conn.RemoteAddr, RemotePort: conn.RemotePort}, PID: conn.PID, ProcessName: conn.ProcessName, FirstSeen: conn.FirstSeen, LastSeen: time.Now()}
+				for _, result := range c2.analyzer.AnalyzeBeacons(map[string]*models.TrackedConnection{key: tracked}) {
+					if err := events.Emit(d.registry, "c2_detection", "detection.beacon", "warning", result); err != nil {
+						d.logger.Warn("event rejected", zap.Error(err))
+					}
+				}
+			}
+
+			if err := events.Emit(d.registry, "connection_tracker", "network.connect", "info", conn); err != nil {
+				d.logger.Warn("event rejected", zap.Error(err))
+			}
+		}
 		if err := d.registry.Register(conntrackSvc); err != nil {
 			d.logger.Error("failed to register connection tracker", zap.Error(err))
 		}
@@ -100,6 +126,11 @@ func (d *Daemon) InitializeServices() error {
 
 	// 3. Process monitor
 	processSvc := process.New(&cfg.Services.ProcessMonitor)
+	processSvc.OnProcess = func(proc models.Process) {
+		if err := events.Emit(d.registry, "process_tracker", "process.observed", "info", proc); err != nil {
+			d.logger.Warn("event rejected", zap.Error(err))
+		}
+	}
 	if err := d.registry.Register(processSvc); err != nil {
 		d.logger.Error("failed to register process service", zap.Error(err))
 	}
@@ -139,6 +170,11 @@ func (d *Daemon) InitializeServices() error {
 	// 8. DNS tunnel detection (new security feature)
 	if cfg.Services.DNSTunnelDetection.Enabled {
 		dnsSvc := dnstunnel.New(&cfg.Services.DNSTunnelDetection)
+		dnsSvc.OnTunnelDetected(func(event *models.DNSTunnelEvent) {
+			if err := events.Emit(d.registry, "dns_tunnel_detection", "detection.dns_tunnel", "warning", event); err != nil {
+				d.logger.Warn("event rejected", zap.Error(err))
+			}
+		})
 		if err := d.registry.Register(dnsSvc); err != nil {
 			d.logger.Error("failed to register DNS tunnel service", zap.Error(err))
 		}

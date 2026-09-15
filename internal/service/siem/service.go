@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"github.com/afterdarksys/afterdark-darkd/internal/events"
+	"github.com/afterdarksys/afterdark-darkd/internal/service"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
-
-	"github.com/afterdarksys/afterdark-darkd/internal/service"
-	"github.com/afterdarksys/afterdark-darkd/pkg/logging"
-	"go.uber.org/zap"
 )
 
 const ServiceName = "siem_forwarder"
@@ -21,160 +21,140 @@ type Config struct {
 	AuthToken string `mapstructure:"auth_token"`
 	BatchSize int    `mapstructure:"batch_size"`
 }
-
-type LogEvent struct {
-	Timestamp time.Time `json:"timestamp"`
-	Level     string    `json:"level"`
-	Message   string    `json:"message"`
-	Source    string    `json:"source"`
-}
-
 type Service struct {
-	config   *Config
-	logger   *zap.Logger
+	mu       sync.Mutex
+	config   Config
 	registry service.RegistryInterface
-
-	logChan chan LogEvent
-	mu      sync.RWMutex
-	running bool
-	stopCh  chan struct{}
+	cancel   context.CancelFunc
+	done     chan struct{}
+	lastErr  error
+	client   *http.Client
 }
 
-func New(config *Config, registry service.RegistryInterface) (*Service, error) {
-	if config == nil {
-		config = &Config{
-			Enabled:   false,
-			BatchSize: 100,
-		}
+func New(c *Config, r service.RegistryInterface) (*Service, error) {
+	if c == nil {
+		c = &Config{BatchSize: 100}
 	}
-
-	return &Service{
-		config:   config,
-		logger:   logging.With(zap.String("service", ServiceName)),
-		registry: registry,
-		logChan:  make(chan LogEvent, 1000),
-		stopCh:   make(chan struct{}),
-	}, nil
+	if c.BatchSize <= 0 || c.BatchSize > 1000 {
+		c.BatchSize = 100
+	}
+	return &Service{config: *c, registry: r, client: &http.Client{Timeout: 5 * time.Second}}, nil
 }
-
-func (s *Service) Name() string {
-	return ServiceName
-}
-
+func (s *Service) Name() string { return ServiceName }
 func (s *Service) Start(ctx context.Context) error {
 	s.mu.Lock()
-	if s.running {
-		s.mu.Unlock()
+	defer s.mu.Unlock()
+	if s.cancel != nil {
 		return nil
 	}
-	s.running = true
-	s.mu.Unlock()
-
-	s.logger.Info("starting siem forwarder")
-	go s.forwardLoop()
-
+	u, err := url.Parse(s.config.URL)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return fmt.Errorf("invalid SIEM URL")
+	}
+	if _, ok := s.registry.Get(events.ServiceName).(*events.Store); !ok {
+		return fmt.Errorf("durable event store required")
+	}
+	ctx, s.cancel = context.WithCancel(ctx)
+	s.done = make(chan struct{})
+	go s.run(ctx)
 	return nil
 }
-
 func (s *Service) Stop(ctx context.Context) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if !s.running {
+	cancel, done := s.cancel, s.done
+	s.mu.Unlock()
+	if cancel == nil {
 		return nil
 	}
-	s.running = false
-	close(s.stopCh)
-	s.logger.Info("stopped siem forwarder")
-	return nil
+	cancel()
+	select {
+	case <-done:
+		s.mu.Lock()
+		s.cancel = nil
+		s.mu.Unlock()
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
-
-func (s *Service) Configure(config interface{}) error {
+func (s *Service) Configure(interface{}) error {
+	return fmt.Errorf("SIEM configuration requires restart")
+}
+func (s *Service) Health() service.HealthStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if cfg, ok := config.(*Config); ok {
-		s.config = cfg
+	h := service.HealthStatus{Status: service.HealthHealthy, Message: "durable export active", LastCheck: time.Now()}
+	if s.cancel == nil {
+		h.Status = service.HealthUnhealthy
+		h.Message = "export stopped"
+	} else if s.lastErr != nil {
+		h.Status = service.HealthDegraded
+		h.Message = s.lastErr.Error()
 	}
-	return nil
+	return h
 }
-
-func (s *Service) Health() service.HealthStatus {
-	return service.HealthStatus{
-		Status:    service.HealthHealthy,
-		Message:   "forwarding active",
-		LastCheck: time.Now(),
-	}
-}
-
-// IngestLog is a public method for other services to send logs to SIEM
 func (s *Service) IngestLog(level, msg, source string) {
-	select {
-	case s.logChan <- LogEvent{
-		Timestamp: time.Now(),
-		Level:     level,
-		Message:   msg,
-		Source:    source,
-	}:
-	default:
-		// Drop log if buffer full to prevent blocking
+	err := events.Emit(s.registry, source, "log", level, map[string]string{"message": msg})
+	if err != nil {
+		s.mu.Lock()
+		s.lastErr = err
+		s.mu.Unlock()
 	}
 }
-
-func (s *Service) forwardLoop() {
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	var batch []LogEvent
-
+func (s *Service) run(ctx context.Context) {
+	defer close(s.done)
+	delay := time.Second
 	for {
+		err := s.forward(ctx)
+		s.mu.Lock()
+		s.lastErr = err
+		s.mu.Unlock()
+		if err != nil {
+			delay *= 2
+			if delay > time.Minute {
+				delay = time.Minute
+			}
+		} else {
+			delay = time.Second
+		}
+		timer := time.NewTimer(delay)
 		select {
-		case <-s.stopCh:
-			s.flush(batch)
+		case <-ctx.Done():
+			timer.Stop()
 			return
-		case event := <-s.logChan:
-			batch = append(batch, event)
-			if len(batch) >= s.config.BatchSize {
-				s.flush(batch)
-				batch = nil
-			}
-		case <-ticker.C:
-			if len(batch) > 0 {
-				s.flush(batch)
-				batch = nil
-			}
+		case <-timer.C:
 		}
 	}
 }
-
-func (s *Service) flush(batch []LogEvent) {
-	if len(batch) == 0 || s.config.URL == "" {
-		return
+func (s *Service) forward(ctx context.Context) error {
+	store := s.registry.Get(events.ServiceName).(*events.Store)
+	batch, err := store.List(ctx, s.config.BatchSize, true, time.Time{}, "", "")
+	if err != nil || len(batch) == 0 {
+		return err
 	}
-
 	data, err := json.Marshal(batch)
 	if err != nil {
-		s.logger.Error("failed to marshal logs", zap.Error(err))
-		return
+		return err
 	}
-
-	req, err := http.NewRequest("POST", s.config.URL, bytes.NewBuffer(data))
+	req, err := http.NewRequestWithContext(ctx, "POST", s.config.URL, bytes.NewReader(data))
 	if err != nil {
-		return
+		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if s.config.AuthToken != "" {
 		req.Header.Set("Authorization", "Bearer "+s.config.AuthToken)
 	}
-
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := s.client.Do(req)
 	if err != nil {
-		s.logger.Error("failed to forward logs to SIEM", zap.Error(err))
-		return
+		return err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		s.logger.Error("siem rejected logs", zap.Int("status", resp.StatusCode))
+	resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("SIEM rejected batch: HTTP %d", resp.StatusCode)
 	}
+	ids := make([]string, len(batch))
+	for i, e := range batch {
+		ids[i] = e.ID
+	}
+	return store.Ack(ctx, ids)
 }

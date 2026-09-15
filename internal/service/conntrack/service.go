@@ -19,11 +19,12 @@ import (
 
 // Service tracks network connections over time
 type Service struct {
-	mu      sync.RWMutex
-	config  *models.TrackingConfig
-	running bool
-	cancel  context.CancelFunc
-	logger  *zap.Logger
+	OnConnection func(models.NetworkConnection)
+	mu           sync.RWMutex
+	config       *models.TrackingConfig
+	running      bool
+	cancel       context.CancelFunc
+	logger       *zap.Logger
 
 	// Current connections
 	activeConns map[string]*models.NetworkConnection
@@ -229,6 +230,9 @@ func (s *Service) scan() error {
 		if _, exists := s.activeConns[key]; !exists {
 			// New connection
 			s.addEvent("new", newConn)
+			if s.OnConnection != nil {
+				s.OnConnection(*newConn)
+			}
 		}
 	}
 

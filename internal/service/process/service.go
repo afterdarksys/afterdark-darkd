@@ -15,11 +15,12 @@ import (
 
 // Service monitors running processes
 type Service struct {
-	mu       sync.RWMutex
-	config   *models.TrackingConfig
-	running  bool
-	cancel   context.CancelFunc
-	logger   *zap.Logger
+	OnProcess func(models.Process)
+	mu        sync.RWMutex
+	config    *models.TrackingConfig
+	running   bool
+	cancel    context.CancelFunc
+	logger    *zap.Logger
 
 	// Current state
 	processes    map[int32]*models.Process
@@ -198,6 +199,11 @@ func (s *Service) scan() error {
 	}
 
 	s.mu.Lock()
+	for pid, proc := range newProcesses {
+		if _, exists := s.processes[pid]; !exists && s.OnProcess != nil {
+			s.OnProcess(*proc)
+		}
+	}
 	s.processes = newProcesses
 	s.lastSnapshot = &snapshot
 
