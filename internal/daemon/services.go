@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/afterdarksys/afterdark-darkd/internal/api/afterdark"
@@ -62,7 +63,7 @@ func (d *Daemon) InitializeServices() error {
 
 	store, err := storagefactory.New(cfg.Storage.Backend, storageCfg)
 	if err != nil {
-		d.logger.Warn("failed to initialize storage", zap.Error(err))
+		return fmt.Errorf("initialize storage: %w", err)
 	}
 
 	// Initialize API client

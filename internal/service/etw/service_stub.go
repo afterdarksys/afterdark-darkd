@@ -39,7 +39,7 @@ func (s *Service) Configure(config interface{}) error {
 
 func (s *Service) Health() service.HealthStatus {
 	return service.HealthStatus{
-		Status:    service.HealthHealthy,
+		Status:    service.HealthDegraded,
 		Message:   "platform not supported",
 		LastCheck: time.Now(),
 	}

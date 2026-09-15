@@ -45,7 +45,7 @@ func (s *Service) Configure(config interface{}) error {
 
 func (s *Service) Health() service.HealthStatus {
 	return service.HealthStatus{
-		Status:    service.HealthHealthy, // Report healthy so daemon doesn't complain
+		Status:    service.HealthDegraded, // Report healthy so daemon doesn't complain
 		Message:   "platform not supported",
 		LastCheck: time.Now(),
 	}

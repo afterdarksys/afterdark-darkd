@@ -68,12 +68,12 @@ func generateSelfSignedCert(dir string) (*tls.Certificate, *x509.Certificate, er
 			Organization: []string{"AfterDark Systems"},
 			CommonName:   "afterdark-darkd IPC",
 		},
-		IPAddresses: []net.IP{net.ParseIP("127.0.0.1"), net.IPv6loopback},
-		NotBefore:   time.Now().Add(-time.Minute), // small grace for clock skew
-		NotAfter:    time.Now().Add(10 * 365 * 24 * time.Hour),
-		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		IsCA:        true,
+		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1"), net.IPv6loopback},
+		NotBefore:             time.Now().Add(-time.Minute), // small grace for clock skew
+		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IsCA:                  true,
 		BasicConstraintsValid: true,
 	}
 

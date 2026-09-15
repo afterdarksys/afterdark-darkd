@@ -71,6 +71,7 @@ func (h HealthState) MarshalJSON() ([]byte, error) {
 type Registry struct {
 	mu       sync.RWMutex
 	services map[string]Service
+	started  []Service
 	order    []string // Tracks registration order for startup sequence
 }
 
@@ -116,30 +117,30 @@ func (r *Registry) GetOk(name string) (Service, bool) {
 
 // StartAll starts all registered services in order
 func (r *Registry) StartAll(ctx context.Context) error {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	for _, name := range r.order {
-		svc := r.services[name]
+	for _, svc := range r.All() {
 		if err := svc.Start(ctx); err != nil {
-			return fmt.Errorf("failed to start service %s: %w", name, err)
+			cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			_ = svc.Stop(cleanup)
+			_ = r.StopAll(cleanup)
+			cancel()
+			return fmt.Errorf("failed to start service %s: %w", svc.Name(), err)
 		}
+		r.mu.Lock()
+		r.started = append(r.started, svc)
+		r.mu.Unlock()
 	}
 	return nil
 }
 
-// StopAll stops all registered services in reverse order
 func (r *Registry) StopAll(ctx context.Context) error {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
+	r.mu.Lock()
+	started := r.started
+	r.started = nil
+	r.mu.Unlock()
 	var lastErr error
-	// Stop in reverse order
-	for i := len(r.order) - 1; i >= 0; i-- {
-		name := r.order[i]
-		svc := r.services[name]
-		if err := svc.Stop(ctx); err != nil {
-			lastErr = fmt.Errorf("failed to stop service %s: %w", name, err)
+	for i := len(started) - 1; i >= 0; i-- {
+		if err := started[i].Stop(ctx); err != nil {
+			lastErr = fmt.Errorf("stop %s: %w", started[i].Name(), err)
 		}
 	}
 	return lastErr

@@ -52,6 +52,7 @@ type Daemon struct {
 	registry *service.Registry
 	state    State
 	mu       sync.RWMutex
+	stopOnce sync.Once
 	logger   *zap.Logger
 
 	// Plugin host
@@ -140,7 +141,14 @@ func (d *Daemon) setState(state State) {
 }
 
 // Start initializes and starts the daemon
-func (d *Daemon) Start(ctx context.Context) error {
+func (d *Daemon) Start(ctx context.Context) (err error) {
+	defer func() {
+		if err != nil {
+			cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_ = d.Stop(cleanup)
+		}
+	}()
 	d.setState(StateStarting)
 	d.logger.Info("starting daemon")
 
@@ -206,44 +214,45 @@ func (d *Daemon) Start(ctx context.Context) error {
 
 // Stop gracefully shuts down the daemon
 func (d *Daemon) Stop(ctx context.Context) error {
-	d.setState(StateStopping)
-	d.logger.Info("stopping daemon")
+	d.stopOnce.Do(func() {
+		d.setState(StateStopping)
+		d.logger.Info("stopping daemon")
 
-	// Signal shutdown
-	close(d.shutdownCh)
+		// Signal shutdown
+		close(d.shutdownCh)
 
-	// Stop admin web UI
-	if d.webServer != nil {
-		if err := d.webServer.Stop(ctx); err != nil {
-			d.logger.Error("error stopping admin web UI", zap.Error(err))
+		// Stop admin web UI
+		if d.webServer != nil {
+			if err := d.webServer.Stop(ctx); err != nil {
+				d.logger.Error("error stopping admin web UI", zap.Error(err))
+			}
 		}
-	}
 
-	// Stop IPC server
-	if d.ipcServer != nil {
-		if err := d.ipcServer.Stop(ctx); err != nil {
-			d.logger.Error("error stopping IPC server", zap.Error(err))
+		// Stop IPC server
+		if d.ipcServer != nil {
+			if err := d.ipcServer.Stop(ctx); err != nil {
+				d.logger.Error("error stopping IPC server", zap.Error(err))
+			}
 		}
-	}
 
-	// Stop plugin services first
-	d.stopPluginServices(ctx)
+		// Stop plugin services first
+		d.stopPluginServices(ctx)
 
-	// Unload all plugins
-	d.pluginHost.UnloadAllPlugins()
+		// Unload all plugins
+		d.pluginHost.UnloadAllPlugins()
 
-	// Stop all services
-	if err := d.registry.StopAll(ctx); err != nil {
-		d.logger.Error("error stopping services", zap.Error(err))
-	}
+		// Stop all services
+		if err := d.registry.StopAll(ctx); err != nil {
+			d.logger.Error("error stopping services", zap.Error(err))
+		}
 
-	// Remove PID file
-	d.removePIDFile()
+		// Remove PID file
+		d.removePIDFile()
 
-	d.setState(StateStopped)
-	d.logger.Info("daemon stopped")
-	close(d.doneCh)
-
+		d.setState(StateStopped)
+		d.logger.Info("daemon stopped")
+		close(d.doneCh)
+	})
 	return nil
 }
 
@@ -286,8 +295,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 // Reload reloads the daemon configuration
 func (d *Daemon) Reload(ctx context.Context) error {
 	d.logger.Info("reloading configuration")
-	// TODO: Implement configuration reload
-	return nil
+	return fmt.Errorf("configuration reload is not implemented; restart with validated configuration")
 }
 
 // Wait blocks until the daemon has fully stopped

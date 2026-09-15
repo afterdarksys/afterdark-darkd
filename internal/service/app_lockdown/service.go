@@ -2,6 +2,7 @@ package app_lockdown
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -61,7 +62,7 @@ func (s *Service) Start(ctx context.Context) error {
 	s.logger.Info("starting app_lockdown service")
 
 	if s.config.BlockNewProcesses {
-		s.EnableLockdown()
+		return s.EnableLockdown()
 	}
 
 	return nil
@@ -81,35 +82,25 @@ func (s *Service) Stop(ctx context.Context) error {
 }
 
 func (s *Service) Configure(config interface{}) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if cfg, ok := config.(*Config); ok {
-		s.config = cfg
-		if cfg.BlockNewProcesses {
-			s.EnableLockdown()
-		} else {
-			s.DisableLockdown()
-		}
+	cfg, ok := config.(*Config)
+	if !ok || cfg == nil {
+		return fmt.Errorf("invalid lockdown configuration")
 	}
+	if cfg.BlockNewProcesses {
+		return fmt.Errorf("process enforcement is not implemented")
+	}
+	s.mu.Lock()
+	s.config = cfg
+	s.locked = false
+	s.mu.Unlock()
 	return nil
 }
-
-func (s *Service) EnableLockdown() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.locked = true
-	s.logger.Warn("LOCKDOWN MODE ENABLED: Blocking all new processes not in allowlist")
-	// STUB: Enable kernel restrictions (e.g., via Fanotify or process hooks)
-}
-
-func (s *Service) DisableLockdown() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.locked = false
-	s.logger.Info("Lockdown mode disabled")
-}
+func (s *Service) EnableLockdown() error { return fmt.Errorf("process enforcement is not implemented") }
+func (s *Service) DisableLockdown()      { s.mu.Lock(); s.locked = false; s.mu.Unlock() }
 
 func (s *Service) Health() service.HealthStatus {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	status := service.HealthHealthy
 	msg := "ready"
 	if s.locked {

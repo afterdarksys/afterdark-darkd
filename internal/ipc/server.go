@@ -135,7 +135,6 @@ func (s *Server) Start(ctx context.Context) error {
 		s.mu.Unlock()
 		return fmt.Errorf("server already running")
 	}
-	s.running = true
 	s.startedAt = time.Now()
 	s.mu.Unlock()
 
@@ -159,6 +158,9 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	s.grpcSrv = grpc.NewServer(opts...)
+	s.mu.Lock()
+	s.running = true
+	s.mu.Unlock()
 	pb.RegisterDaemonServiceServer(s.grpcSrv, s)
 
 	// Start serving
@@ -545,11 +547,18 @@ func (s *Server) GetHealth(ctx context.Context, req *pb.HealthRequest) (*pb.Heal
 	runtime.ReadMemStats(&memStats)
 
 	services := make(map[string]*pb.ServiceHealth)
+	overall := "healthy"
+	if s.registry == nil {
+		overall = "unavailable"
+	}
 
 	// Get health from all registered services
 	if s.registry != nil {
 		for _, svc := range s.registry.All() {
 			health := svc.Health()
+			if health.Status != service.HealthHealthy {
+				overall = "degraded"
+			}
 			services[svc.Name()] = &pb.ServiceHealth{
 				Name:    svc.Name(),
 				Status:  health.Status.String(),
@@ -562,8 +571,8 @@ func (s *Server) GetHealth(ctx context.Context, req *pb.HealthRequest) (*pb.Heal
 	}
 
 	return &pb.HealthResponse{
-		Status:   "healthy",
-		Message:  "all services operational",
+		Status:   overall,
+		Message:  "aggregate service health",
 		Services: services,
 		Resources: &pb.ResourceMetrics{
 			CpuPercent:       0, // Would need to measure
@@ -605,45 +614,31 @@ func (s *Server) GetCompliance(ctx context.Context, req *pb.GetComplianceRequest
 
 // ListPatches returns patches
 func (s *Server) ListPatches(ctx context.Context, req *pb.ListPatchesRequest) (*pb.PatchListResponse, error) {
-	return &pb.PatchListResponse{
-		Patches:    []*pb.Patch{},
-		TotalCount: 0,
-	}, nil
+	return nil, status.Error(codes.Unimplemented, "ListPatches is not available")
 }
 
 // TriggerScan triggers a scan
 func (s *Server) TriggerScan(ctx context.Context, req *pb.TriggerScanRequest) (*pb.ScanResponse, error) {
-	scanType := req.GetScanType()
-	if scanType == "" {
-		scanType = "patches"
+	if s.registry == nil {
+		return nil, status.Error(codes.Unavailable, "service registry unavailable")
 	}
-
-	scanID := fmt.Sprintf("scan-%d", time.Now().Unix())
-
-	if s.registry != nil {
-		switch scanType {
-		case "patches", "patch":
-			svc := s.registry.Get("patch_monitor")
-			if svc != nil {
-				if patchSvc, ok := svc.(*patch.Service); ok {
-					patchSvc.TriggerScan()
-				}
-			}
-		case "threats", "threat_intel":
-			svc := s.registry.Get("threat_intel")
-			if svc != nil {
-				if threatSvc, ok := svc.(*threat.Service); ok {
-					threatSvc.TriggerSync()
-				}
-			}
+	switch req.GetScanType() {
+	case "", "patch", "patches":
+		svc, ok := s.registry.Get("patch_monitor").(*patch.Service)
+		if !ok {
+			return nil, status.Error(codes.Unavailable, "patch monitor unavailable")
 		}
+		svc.TriggerScan()
+	case "threats", "threat_intel":
+		svc, ok := s.registry.Get("threat_intel").(*threat.Service)
+		if !ok {
+			return nil, status.Error(codes.Unavailable, "threat intelligence unavailable")
+		}
+		svc.TriggerSync()
+	default:
+		return nil, status.Error(codes.InvalidArgument, "unknown scan type")
 	}
-
-	return &pb.ScanResponse{
-		Started: true,
-		ScanId:  scanID,
-		Message: fmt.Sprintf("%s scan started", scanType),
-	}, nil
+	return &pb.ScanResponse{Started: true, Message: "scan queued"}, nil
 }
 
 // GetThreatStatus returns threat intel status
@@ -680,6 +675,13 @@ func (s *Server) GetThreatStatus(ctx context.Context, req *pb.GetThreatStatusReq
 
 // CheckDomain checks a domain against threat intel
 func (s *Server) CheckDomain(ctx context.Context, req *pb.CheckDomainRequest) (*pb.ThreatCheckResponse, error) {
+	if s.registry == nil || s.registry.Get("threat_intel") == nil {
+		return nil, status.Error(codes.Unavailable, "threat intelligence unavailable")
+	}
+	if t, ok := s.registry.Get("threat_intel").(*threat.Service); !ok || t.GetLastSync().IsZero() {
+		return nil, status.Error(codes.Unavailable, "threat intelligence has no successful sync")
+	}
+
 	domain := req.GetDomain()
 
 	if s.registry != nil {
@@ -709,6 +711,13 @@ func (s *Server) CheckDomain(ctx context.Context, req *pb.CheckDomainRequest) (*
 
 // CheckIP checks an IP against threat intel
 func (s *Server) CheckIP(ctx context.Context, req *pb.CheckIPRequest) (*pb.ThreatCheckResponse, error) {
+	if s.registry == nil || s.registry.Get("threat_intel") == nil {
+		return nil, status.Error(codes.Unavailable, "threat intelligence unavailable")
+	}
+	if t, ok := s.registry.Get("threat_intel").(*threat.Service); !ok || t.GetLastSync().IsZero() {
+		return nil, status.Error(codes.Unavailable, "threat intelligence has no successful sync")
+	}
+
 	ip := req.GetIp()
 
 	if s.registry != nil {
@@ -738,22 +747,21 @@ func (s *Server) CheckIP(ctx context.Context, req *pb.CheckIPRequest) (*pb.Threa
 
 // CheckBulk checks multiple indicators
 func (s *Server) CheckBulk(ctx context.Context, req *pb.CheckBulkRequest) (*pb.CheckBulkResponse, error) {
-	var results []*pb.ThreatCheckResponse
-
+	results := make([]*pb.ThreatCheckResponse, 0, len(req.GetDomains())+len(req.GetIps()))
 	for _, domain := range req.GetDomains() {
-		results = append(results, &pb.ThreatCheckResponse{
-			IsThreat:  false,
-			Indicator: domain,
-		})
+		result, err := s.CheckDomain(ctx, &pb.CheckDomainRequest{Domain: domain})
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, result)
 	}
-
 	for _, ip := range req.GetIps() {
-		results = append(results, &pb.ThreatCheckResponse{
-			IsThreat:  false,
-			Indicator: ip,
-		})
+		result, err := s.CheckIP(ctx, &pb.CheckIPRequest{Ip: ip})
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, result)
 	}
-
 	return &pb.CheckBulkResponse{Results: results}, nil
 }
 
@@ -766,7 +774,7 @@ func (s *Server) ListServices(ctx context.Context, req *pb.ListServicesRequest) 
 			health := svc.Health()
 			services = append(services, &pb.ServiceInfo{
 				Name:    svc.Name(),
-				Status:  "running",
+				Status:  health.Status.String(),
 				Enabled: true,
 				Health:  health.Status.String(),
 			})
@@ -778,99 +786,62 @@ func (s *Server) ListServices(ctx context.Context, req *pb.ListServicesRequest) 
 
 // StartService starts a service
 func (s *Server) StartService(ctx context.Context, req *pb.ServiceRequest) (*pb.ServiceResponse, error) {
-	return &pb.ServiceResponse{
-		Success: true,
-		Message: fmt.Sprintf("service %s started", req.GetName()),
-	}, nil
+	return nil, status.Error(codes.Unimplemented, "StartService is not available")
 }
 
 // StopService stops a service
 func (s *Server) StopService(ctx context.Context, req *pb.ServiceRequest) (*pb.ServiceResponse, error) {
-	return &pb.ServiceResponse{
-		Success: true,
-		Message: fmt.Sprintf("service %s stopped", req.GetName()),
-	}, nil
+	return nil, status.Error(codes.Unimplemented, "StopService is not available")
 }
 
 // RestartService restarts a service
 func (s *Server) RestartService(ctx context.Context, req *pb.ServiceRequest) (*pb.ServiceResponse, error) {
-	return &pb.ServiceResponse{
-		Success: true,
-		Message: fmt.Sprintf("service %s restarted", req.GetName()),
-	}, nil
+	return nil, status.Error(codes.Unimplemented, "RestartService is not available")
 }
 
 // GetConfig returns configuration
 func (s *Server) GetConfig(ctx context.Context, req *pb.GetConfigRequest) (*pb.ConfigResponse, error) {
-	return &pb.ConfigResponse{
-		ConfigJson: []byte("{}"),
-		ConfigYaml: "",
-	}, nil
+	return nil, status.Error(codes.Unimplemented, "GetConfig is not available")
 }
 
 // ReloadConfig reloads configuration
 func (s *Server) ReloadConfig(ctx context.Context, req *pb.ReloadConfigRequest) (*pb.ReloadResponse, error) {
-	return &pb.ReloadResponse{
-		Success: true,
-		Message: "configuration reloaded",
-	}, nil
+	return nil, status.Error(codes.Unimplemented, "ReloadConfig is not available")
 }
 
 // GetConnections returns network connections
 func (s *Server) GetConnections(ctx context.Context, req *pb.GetConnectionsRequest) (*pb.ConnectionsResponse, error) {
-	return &pb.ConnectionsResponse{
-		Connections:  []*pb.Connection{},
-		TotalCount:   0,
-		FlaggedCount: 0,
-	}, nil
+	return nil, status.Error(codes.Unimplemented, "GetConnections is not available")
 }
 
 // GetFileStatus returns file status
 func (s *Server) GetFileStatus(ctx context.Context, req *pb.GetFileStatusRequest) (*pb.FileStatusResponse, error) {
-	return &pb.FileStatusResponse{
-		Found: false,
-	}, nil
+	return nil, status.Error(codes.Unimplemented, "GetFileStatus is not available")
 }
 
 // ListQuarantined returns quarantined files
 func (s *Server) ListQuarantined(ctx context.Context, req *pb.ListQuarantinedRequest) (*pb.QuarantinedResponse, error) {
-	return &pb.QuarantinedResponse{
-		Files:      []*pb.QuarantinedFile{},
-		TotalCount: 0,
-	}, nil
+	return nil, status.Error(codes.Unimplemented, "ListQuarantined is not available")
 }
 
 // ListProcesses returns processes
 func (s *Server) ListProcesses(ctx context.Context, req *pb.ListProcessesRequest) (*pb.ProcessListResponse, error) {
-	return &pb.ProcessListResponse{
-		Processes:       []*pb.Process{},
-		TotalCount:      0,
-		SuspiciousCount: 0,
-	}, nil
+	return nil, status.Error(codes.Unimplemented, "ListProcesses is not available")
 }
 
 // GetEvents returns events
 func (s *Server) GetEvents(ctx context.Context, req *pb.GetEventsRequest) (*pb.EventsResponse, error) {
-	return &pb.EventsResponse{
-		Events:     []*pb.Event{},
-		TotalCount: 0,
-		HasMore:    false,
-	}, nil
+	return nil, status.Error(codes.Unimplemented, "GetEvents is not available")
 }
 
 // StreamEvents streams events
 func (s *Server) StreamEvents(req *pb.GetEventsRequest, stream pb.DaemonService_StreamEventsServer) error {
-	// This would subscribe to an event bus and stream events
-	<-stream.Context().Done()
-	return stream.Context().Err()
+	return status.Error(codes.Unimplemented, "event streaming is not available")
 }
 
 // Shutdown initiates daemon shutdown
 func (s *Server) Shutdown(ctx context.Context, req *pb.ShutdownRequest) (*pb.ShutdownResponse, error) {
-	return &pb.ShutdownResponse{
-		Accepted: true,
-		Message:  "shutdown initiated",
-	}, nil
+	return nil, status.Error(codes.Unimplemented, "Shutdown is not available")
 }
 
 // ============================================================================
@@ -879,33 +850,7 @@ func (s *Server) Shutdown(ctx context.Context, req *pb.ShutdownRequest) (*pb.Shu
 
 // GetBeaconAnalysis returns C2 beacon analysis results
 func (s *Server) GetBeaconAnalysis(ctx context.Context, req *pb.GetBeaconAnalysisRequest) (*pb.BeaconAnalysisResponse, error) {
-	if s.registry == nil {
-		return nil, status.Error(codes.Unavailable, "service registry not available")
-	}
-
-	c2Svc := s.registry.Get("c2_detection")
-	if c2Svc == nil {
-		return &pb.BeaconAnalysisResponse{
-			Beacons:       []*pb.BeaconAnalysis{},
-			TotalAnalyzed: 0,
-			LikelyBeacons: 0,
-		}, nil
-	}
-
-	// Type assert to get C2DetectionService interface
-	// For now, return stub data
-	var beacons []*pb.BeaconAnalysis
-
-	limit := int(req.GetLimit())
-	if limit == 0 {
-		limit = 100
-	}
-
-	return &pb.BeaconAnalysisResponse{
-		Beacons:       beacons,
-		TotalAnalyzed: 0,
-		LikelyBeacons: 0,
-	}, nil
+	return nil, status.Error(codes.Unimplemented, "GetBeaconAnalysis is not available")
 }
 
 // ============================================================================
@@ -914,27 +859,7 @@ func (s *Server) GetBeaconAnalysis(ctx context.Context, req *pb.GetBeaconAnalysi
 
 // GetDNSTunnelAnalysis returns DNS tunnel analysis results
 func (s *Server) GetDNSTunnelAnalysis(ctx context.Context, req *pb.GetDNSTunnelAnalysisRequest) (*pb.DNSTunnelAnalysisResponse, error) {
-	if s.registry == nil {
-		return nil, status.Error(codes.Unavailable, "service registry not available")
-	}
-
-	dnsSvc := s.registry.Get("dns_tunnel_detection")
-	if dnsSvc == nil {
-		return &pb.DNSTunnelAnalysisResponse{
-			Tunnels:              []*pb.DNSTunnelAnalysis{},
-			TotalDomainsAnalyzed: 0,
-			LikelyTunnels:        0,
-		}, nil
-	}
-
-	// For now, return stub data
-	var tunnels []*pb.DNSTunnelAnalysis
-
-	return &pb.DNSTunnelAnalysisResponse{
-		Tunnels:              tunnels,
-		TotalDomainsAnalyzed: 0,
-		LikelyTunnels:        0,
-	}, nil
+	return nil, status.Error(codes.Unimplemented, "GetDNSTunnelAnalysis is not available")
 }
 
 // ============================================================================
@@ -943,50 +868,10 @@ func (s *Server) GetDNSTunnelAnalysis(ctx context.Context, req *pb.GetDNSTunnelA
 
 // ScanProcessMemory triggers a memory scan for a specific process
 func (s *Server) ScanProcessMemory(ctx context.Context, req *pb.ScanProcessMemoryRequest) (*pb.MemoryScanResponse, error) {
-	if s.registry == nil {
-		return nil, status.Error(codes.Unavailable, "service registry not available")
-	}
-
-	memSvc := s.registry.Get("memory_scanner")
-	if memSvc == nil {
-		return nil, status.Error(codes.Unavailable, "memory_scanner service not available")
-	}
-
-	pid := int(req.GetPid())
-	if pid <= 0 {
-		return nil, status.Error(codes.InvalidArgument, "invalid PID")
-	}
-
-	// For now, return that scan was started
-	scanID := fmt.Sprintf("memscan-%d-%d", pid, time.Now().Unix())
-
-	return &pb.MemoryScanResponse{
-		ScanStarted: true,
-		ScanId:      scanID,
-	}, nil
+	return nil, status.Error(codes.Unimplemented, "ScanProcessMemory is not available")
 }
 
 // GetMemoryScanResults returns memory scan results
 func (s *Server) GetMemoryScanResults(ctx context.Context, req *pb.GetMemoryScanResultsRequest) (*pb.MemoryScanResultsResponse, error) {
-	if s.registry == nil {
-		return nil, status.Error(codes.Unavailable, "service registry not available")
-	}
-
-	memSvc := s.registry.Get("memory_scanner")
-	if memSvc == nil {
-		return &pb.MemoryScanResultsResponse{
-			Results:         []*pb.MemoryScanResult{},
-			TotalScanned:    0,
-			SuspiciousCount: 0,
-		}, nil
-	}
-
-	// For now, return stub data
-	var results []*pb.MemoryScanResult
-
-	return &pb.MemoryScanResultsResponse{
-		Results:         results,
-		TotalScanned:    0,
-		SuspiciousCount: 0,
-	}, nil
+	return nil, status.Error(codes.Unimplemented, "GetMemoryScanResults is not available")
 }
