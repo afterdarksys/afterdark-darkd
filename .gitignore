@@ -57,5 +57,8 @@ configs/*.yaml
 tmp/
 temp/
 
+# Local agent session state
+/.omc/state/
+
 # Generated files
 api/proto/*.pb.go
