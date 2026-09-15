@@ -406,6 +406,9 @@ func (f *LinuxFirewall) IsIPBlocked(ctx context.Context, ip string) (bool, *sdk.
 }
 
 func (f *LinuxFirewall) AddRule(ctx context.Context, rule *sdk.FirewallRule) (*sdk.FirewallRule, error) {
+	if err := validateFirewallRule(rule); err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 

@@ -96,6 +96,9 @@ services:
 
 ## Usage
 
+For retained endpoint timelines, evidence export, and versioned detection-rule
+replay, see [Endpoint investigation](docs/INVESTIGATION.md).
+
 ### Check Security Status
 
 ```bash

@@ -51,20 +51,21 @@ type SystemService struct {
 
 // NetworkConnection represents an active network connection
 type NetworkConnection struct {
-	Protocol    string    `json:"protocol"`   // tcp, tcp6, udp, udp6
-	LocalAddr   string    `json:"local_addr"` // IP address
-	LocalPort   uint16    `json:"local_port"`
-	RemoteAddr  string    `json:"remote_addr"` // IP address
-	RemotePort  uint16    `json:"remote_port"`
-	State       string    `json:"state"` // ESTABLISHED, LISTEN, TIME_WAIT, etc.
-	PID         int32     `json:"pid"`
-	ProcessName string    `json:"process_name"`
-	Username    string    `json:"username,omitempty"`
-	FirstSeen   time.Time `json:"first_seen"`
-	LastSeen    time.Time `json:"last_seen"`
-	Duration    float64   `json:"duration_secs"` // seconds
-	BytesSent   uint64    `json:"bytes_sent,omitempty"`
-	BytesRecv   uint64    `json:"bytes_recv,omitempty"`
+	ProcessStartTime time.Time `json:"process_start_time,omitempty"`
+	Protocol         string    `json:"protocol"`   // tcp, tcp6, udp, udp6
+	LocalAddr        string    `json:"local_addr"` // IP address
+	LocalPort        uint16    `json:"local_port"`
+	RemoteAddr       string    `json:"remote_addr"` // IP address
+	RemotePort       uint16    `json:"remote_port"`
+	State            string    `json:"state"` // ESTABLISHED, LISTEN, TIME_WAIT, etc.
+	PID              int32     `json:"pid"`
+	ProcessName      string    `json:"process_name"`
+	Username         string    `json:"username,omitempty"`
+	FirstSeen        time.Time `json:"first_seen"`
+	LastSeen         time.Time `json:"last_seen"`
+	Duration         float64   `json:"duration_secs"` // seconds
+	BytesSent        uint64    `json:"bytes_sent,omitempty"`
+	BytesRecv        uint64    `json:"bytes_recv,omitempty"`
 }
 
 // ConnectionKey uniquely identifies a connection for tracking

@@ -409,3 +409,10 @@ func (s *Service) invalidate(err error) {
 	defer s.mu.Unlock()
 	s.compliance = &ComplianceStatus{Reason: err.Error()}
 }
+
+// Interface is the minimal interface IPC uses to access the patch service.
+type Interface interface {
+	GetComplianceStatus() *ComplianceStatus
+	GetMissingPatches() []platform.Patch
+	TriggerScan()
+}

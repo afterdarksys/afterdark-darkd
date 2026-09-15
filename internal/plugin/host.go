@@ -1,6 +1,10 @@
 package plugin
 
 import (
+	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -128,9 +132,10 @@ func (h *Host) DiscoverPlugins() ([]string, error) {
 
 // LoadPlugin loads a single plugin from the given path
 func (h *Host) LoadPlugin(path string) (*LoadedPlugin, error) {
-	if err := validatePluginPath(path); err != nil {
+	if err := h.validatePluginPath(path); err != nil {
 		return nil, err
 	}
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -188,6 +193,97 @@ func (h *Host) LoadPlugin(path string) (*LoadedPlugin, error) {
 	)
 
 	return loaded, nil
+}
+
+func (h *Host) validatePluginPath(path string) error {
+	pluginDir, err := filepath.Abs(h.pluginDir)
+	if err != nil {
+		return fmt.Errorf("resolve plugin directory: %w", err)
+	}
+	pluginPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("resolve plugin path: %w", err)
+	}
+	rel, err := filepath.Rel(pluginDir, pluginPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("plugin path is outside plugin directory")
+	}
+
+	if err := validatePluginPath(pluginPath); err != nil {
+		return err
+	}
+	if err := h.verifyPluginIntegrity(pluginPath); err != nil {
+		return err
+	}
+	return nil
+}
+
+// verifyPluginIntegrity checks a plugin against a SHA-256 manifest. If a
+// manifest signing public key is configured, the manifest signature is also
+// verified before any plugin digest is trusted.
+func (h *Host) verifyPluginIntegrity(pluginPath string) error {
+	manifestPath := os.Getenv("AFTERDARK_PLUGIN_MANIFEST")
+	if manifestPath == "" {
+		manifestPath = filepath.Join(h.pluginDir, "plugin-manifest.json")
+	}
+	info, err := os.Lstat(manifestPath)
+	if err != nil {
+		return fmt.Errorf("plugin integrity manifest unavailable: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0022 != 0 {
+		return fmt.Errorf("plugin manifest must be a regular file not writable by group or others")
+	}
+	manifest, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return fmt.Errorf("plugin integrity manifest unavailable: %w", err)
+	}
+
+	publicKeyText := strings.TrimSpace(os.Getenv("AFTERDARK_PLUGIN_MANIFEST_PUBLIC_KEY"))
+	requireSignature := os.Getenv("AFTERDARK_REQUIRE_PLUGIN_SIGNATURE") == "1"
+	if requireSignature && publicKeyText == "" {
+		return fmt.Errorf("plugin manifest signature public key is required")
+	}
+	if publicKeyText != "" {
+		publicKey, err := base64.StdEncoding.DecodeString(publicKeyText)
+		if err != nil || len(publicKey) != ed25519.PublicKeySize {
+			return fmt.Errorf("invalid plugin manifest public key")
+		}
+		signaturePath := os.Getenv("AFTERDARK_PLUGIN_MANIFEST_SIGNATURE")
+		if signaturePath == "" {
+			signaturePath = manifestPath + ".sig"
+		}
+		signatureText, err := os.ReadFile(signaturePath)
+		if err != nil {
+			return fmt.Errorf("read plugin manifest signature: %w", err)
+		}
+		signature, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(signatureText)))
+		if err != nil || len(signature) != ed25519.SignatureSize || !ed25519.Verify(ed25519.PublicKey(publicKey), manifest, signature) {
+			return fmt.Errorf("plugin manifest signature verification failed")
+		}
+	}
+
+	var digests map[string]string
+	if err := json.Unmarshal(manifest, &digests); err != nil {
+		return fmt.Errorf("parse plugin integrity manifest: %w", err)
+	}
+	expected, ok := digests[filepath.Base(pluginPath)]
+	if !ok {
+		return fmt.Errorf("plugin %s is not listed in integrity manifest", filepath.Base(pluginPath))
+	}
+	file, err := os.Open(pluginPath)
+	if err != nil {
+		return fmt.Errorf("open plugin for hashing: %w", err)
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return fmt.Errorf("hash plugin: %w", err)
+	}
+	actual := hex.EncodeToString(hash.Sum(nil))
+	if !strings.EqualFold(strings.TrimSpace(expected), actual) {
+		return fmt.Errorf("plugin digest mismatch for %s", filepath.Base(pluginPath))
+	}
+	return nil
 }
 
 // dispensePlugin tries each plugin type until one succeeds

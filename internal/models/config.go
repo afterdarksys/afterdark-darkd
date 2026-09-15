@@ -51,6 +51,7 @@ type RetryConfig struct {
 
 // ServicesConfig holds configuration for all services
 type ServicesConfig struct {
+	Investigation      InvestigationConfig   `yaml:"investigation" json:"investigation" mapstructure:"investigation"`
 	PatchMonitor       PatchMonitorConfig    `yaml:"patch_monitor" json:"patch_monitor"`
 	ProcessMonitor     TrackingConfig        `yaml:"process_monitor" json:"process_monitor"`
 	ThreatIntel        ThreatIntelConfig     `yaml:"threat_intel" json:"threat_intel"`
@@ -78,6 +79,15 @@ type ServicesConfig struct {
 	ESF                ESFConfig             `yaml:"esf" json:"esf"`
 	ETW                ETWConfig             `yaml:"etw" json:"etw"`
 	Registry           RegistryConfig        `yaml:"registry" json:"registry"`
+}
+
+// InvestigationConfig controls local evidence retention. Command lines are
+// opt-in because they can contain credentials or other sensitive arguments.
+type InvestigationConfig struct {
+	Enabled            bool          `yaml:"enabled" json:"enabled" mapstructure:"enabled"`
+	Retention          time.Duration `yaml:"retention" json:"retention" mapstructure:"retention"`
+	MaxEvents          int           `yaml:"max_events" json:"max_events" mapstructure:"max_events"`
+	IncludeCommandLine bool          `yaml:"include_command_line" json:"include_command_line" mapstructure:"include_command_line"`
 }
 
 // C2DetectionConfig holds C2/beaconing detection configuration
@@ -215,6 +225,7 @@ func DefaultConfig() *Config {
 			},
 		},
 		Services: ServicesConfig{
+			Investigation: InvestigationConfig{Retention: 7 * 24 * time.Hour, MaxEvents: 100000},
 			PatchMonitor: PatchMonitorConfig{
 				Enabled:            true,
 				ScanInterval:       1 * time.Hour,

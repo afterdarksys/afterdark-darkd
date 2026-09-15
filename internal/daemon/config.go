@@ -57,6 +57,9 @@ func ValidateConfig(cfg *models.Config) error {
 	}
 
 	// Validate services config
+	if cfg.Services.Investigation.Enabled && (cfg.Services.Investigation.Retention <= 0 || cfg.Services.Investigation.MaxEvents <= 0) {
+		errors = append(errors, "services.investigation.retention and max_events must be positive")
+	}
 	if cfg.Services.PatchMonitor.Enabled {
 		if cfg.Services.PatchMonitor.ScanInterval <= 0 {
 			errors = append(errors, "services.patch_monitor.scan_interval must be positive")

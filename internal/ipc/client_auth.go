@@ -40,3 +40,6 @@ func defaultTokenPath() string {
 	}
 	return path
 }
+
+// DefaultAuthTokenPath returns the platform-specific local IPC credential path.
+func DefaultAuthTokenPath() string { return defaultTokenPath() }

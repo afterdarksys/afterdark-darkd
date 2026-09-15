@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -436,7 +437,7 @@ func (s *AuthService) ChangePassword(ctx context.Context, userID, currentPasswor
 // Helper methods
 
 func (s *AuthService) findUserByEmail(ctx context.Context, email string) (*User, error) {
-	return s.users.GetByEmail(ctx, "", email)
+	return s.users.GetByEmail(ctx, "", strings.ToLower(strings.TrimSpace(email)))
 }
 
 func (s *AuthService) getUserSiteIDs(ctx context.Context, userID string) ([]string, error) {
@@ -480,7 +481,7 @@ func (s *AuthService) logAuthFailure(ctx context.Context, tenantID, identifier, 
 	s.audit.Create(ctx, entry)
 }
 
-// hashToken creates a hash of a token for storage
+// hashToken creates a SHA-256 hash of a token for storage
 func hashToken(token string) string {
 	h := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(h[:])

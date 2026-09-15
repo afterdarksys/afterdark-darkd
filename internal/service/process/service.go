@@ -2,6 +2,7 @@ package process
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"sync"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/afterdarksys/afterdark-darkd/internal/models"
 	"github.com/afterdarksys/afterdark-darkd/internal/service"
 	"github.com/afterdarksys/afterdark-darkd/pkg/logging"
+	gopsnet "github.com/shirou/gopsutil/v3/net"
 	"github.com/shirou/gopsutil/v3/process"
 	"go.uber.org/zap"
 )
@@ -16,11 +18,18 @@ import (
 // Service monitors running processes
 type Service struct {
 	OnProcess func(models.Process)
+	lifecycle sync.Mutex
+	stopping  bool
 	mu        sync.RWMutex
 	config    *models.TrackingConfig
 	running   bool
 	cancel    context.CancelFunc
 	logger    *zap.Logger
+
+	observer      func(models.ProcessSnapshot)
+	done          chan struct{}
+	lastScan      time.Time
+	lastScanError string
 
 	// Current state
 	processes    map[int32]*models.Process
@@ -40,6 +49,13 @@ func New(config *models.TrackingConfig) *Service {
 	}
 }
 
+// SetObserver attaches a local evidence sink before the service starts.
+func (s *Service) SetObserver(observer func(models.ProcessSnapshot)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.observer = observer
+}
+
 // Name returns the service identifier
 func (s *Service) Name() string {
 	return "process_tracker"
@@ -47,13 +63,20 @@ func (s *Service) Name() string {
 
 // Start initializes and starts the service
 func (s *Service) Start(ctx context.Context) error {
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
 	s.mu.Lock()
+	if s.stopping {
+		s.mu.Unlock()
+		return fmt.Errorf("%s is still stopping", s.Name())
+	}
 	if s.running {
 		s.mu.Unlock()
 		return nil
 	}
 
 	s.running = true
+	s.done = make(chan struct{})
 	ctx, s.cancel = context.WithCancel(ctx)
 	s.mu.Unlock()
 
@@ -61,7 +84,7 @@ func (s *Service) Start(ctx context.Context) error {
 		zap.Duration("interval", s.config.ProcessInterval))
 
 	// Initial scan
-	if err := s.scan(); err != nil {
+	if err := s.scan(ctx); err != nil {
 		s.logger.Warn("initial process scan failed", zap.Error(err))
 	}
 
@@ -73,20 +96,27 @@ func (s *Service) Start(ctx context.Context) error {
 
 // Stop gracefully shuts down the service
 func (s *Service) Stop(ctx context.Context) error {
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if !s.running {
+		s.mu.Unlock()
 		return nil
 	}
-
-	s.running = false
-	if s.cancel != nil {
-		s.cancel()
+	s.stopping = true
+	s.cancel()
+	done := s.done
+	s.mu.Unlock()
+	select {
+	case <-done:
+		s.mu.Lock()
+		s.running = false
+		s.stopping = false
+		s.mu.Unlock()
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-
-	s.logger.Info("process tracker service stopped")
-	return nil
 }
 
 // Health returns the current health status
@@ -94,7 +124,7 @@ func (s *Service) Health() service.HealthStatus {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if !s.running {
+	if !s.running || s.stopping {
 		return service.HealthStatus{
 			Status:    service.HealthUnhealthy,
 			Message:   "service not running",
@@ -102,7 +132,19 @@ func (s *Service) Health() service.HealthStatus {
 		}
 	}
 
+	if s.lastScan.IsZero() || s.lastScanError != "" {
+		return service.HealthStatus{Status: service.HealthDegraded, Message: "no successful scan or latest scan failed: " + s.lastScanError, LastCheck: time.Now()}
+	}
+	interval := s.config.ProcessInterval
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	if time.Since(s.lastScan) > 2*interval+30*time.Second {
+		return service.HealthStatus{Status: service.HealthDegraded, Message: "sensor observations are stale", LastCheck: time.Now(), Metrics: map[string]interface{}{"last_successful_scan": s.lastScan}}
+	}
 	metrics := make(map[string]interface{})
+	metrics["collection_method"] = "polling"
+	metrics["last_successful_scan"] = s.lastScan
 	if s.lastSnapshot != nil {
 		metrics["total_processes"] = s.lastSnapshot.Summary.Total
 		metrics["last_scan"] = s.lastSnapshot.Timestamp
@@ -128,8 +170,11 @@ func (s *Service) Configure(config interface{}) error {
 
 // runLoop runs the periodic process scan
 func (s *Service) runLoop(ctx context.Context) {
+	defer close(s.done)
+	s.mu.RLock()
 	interval := s.config.ProcessInterval
-	if interval == 0 {
+	s.mu.RUnlock()
+	if interval <= 0 {
 		interval = 30 * time.Second
 	}
 
@@ -141,7 +186,7 @@ func (s *Service) runLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := s.scan(); err != nil {
+			if err := s.scan(ctx); err != nil {
 				s.logger.Warn("process scan failed", zap.Error(err))
 			}
 		}
@@ -149,12 +194,27 @@ func (s *Service) runLoop(ctx context.Context) {
 }
 
 // scan collects current process information
-func (s *Service) scan() error {
-	procs, err := process.Processes()
+func (s *Service) scan(ctx context.Context) (scanErr error) {
+	defer func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if scanErr != nil {
+			s.lastScanError = scanErr.Error()
+		} else {
+			s.lastScan = time.Now()
+			s.lastScanError = ""
+		}
+	}()
+	procs, err := process.ProcessesWithContext(ctx)
 	if err != nil {
 		return err
 	}
 
+	connections, _ := gopsnet.ConnectionsWithContext(ctx, "all")
+	connectionCounts := make(map[int32]int)
+	for _, conn := range connections {
+		connectionCounts[conn.Pid]++
+	}
 	hostname, _ := os.Hostname()
 	snapshot := models.ProcessSnapshot{
 		Timestamp: time.Now(),
@@ -168,11 +228,15 @@ func (s *Service) scan() error {
 	newProcesses := make(map[int32]*models.Process)
 
 	for _, p := range procs {
-		proc := s.processInfo(p)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		proc := s.processInfo(ctx, p)
 		if proc == nil {
 			continue
 		}
 
+		proc.Connections = connectionCounts[proc.PID]
 		snapshot.Processes = append(snapshot.Processes, *proc)
 		newProcesses[proc.PID] = proc
 
@@ -197,6 +261,9 @@ func (s *Service) scan() error {
 		CPUTotal: cpuTotal,
 		MemTotal: memTotal,
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	s.mu.Lock()
 	for pid, proc := range newProcesses {
@@ -214,6 +281,13 @@ func (s *Service) scan() error {
 	}
 	s.mu.Unlock()
 
+	s.mu.RLock()
+	observer := s.observer
+	s.mu.RUnlock()
+	if observer != nil {
+		observer(snapshot)
+	}
+
 	s.logger.Debug("process scan complete",
 		zap.Int("total", snapshot.Summary.Total),
 		zap.Int("running", snapshot.Summary.Running))
@@ -222,8 +296,8 @@ func (s *Service) scan() error {
 }
 
 // processInfo extracts information from a process
-func (s *Service) processInfo(p *process.Process) *models.Process {
-	name, err := p.Name()
+func (s *Service) processInfo(ctx context.Context, p *process.Process) *models.Process {
+	name, err := p.NameWithContext(ctx)
 	if err != nil {
 		return nil
 	}
@@ -234,40 +308,36 @@ func (s *Service) processInfo(p *process.Process) *models.Process {
 	}
 
 	// Get additional info (may fail for some processes)
-	if ppid, err := p.Ppid(); err == nil {
+	if ppid, err := p.PpidWithContext(ctx); err == nil {
 		proc.PPID = ppid
 	}
 
-	if exe, err := p.Exe(); err == nil {
+	if exe, err := p.ExeWithContext(ctx); err == nil {
 		proc.Executable = exe
 	}
 
-	if cmdline, err := p.Cmdline(); err == nil {
+	if cmdline, err := p.CmdlineWithContext(ctx); err == nil {
 		proc.CommandLine = cmdline
 	}
 
-	if username, err := p.Username(); err == nil {
+	if username, err := p.UsernameWithContext(ctx); err == nil {
 		proc.Username = username
 	}
 
-	if status, err := p.Status(); err == nil && len(status) > 0 {
+	if status, err := p.StatusWithContext(ctx); err == nil && len(status) > 0 {
 		proc.Status = status[0]
 	}
 
-	if createTime, err := p.CreateTime(); err == nil {
+	if createTime, err := p.CreateTimeWithContext(ctx); err == nil {
 		proc.StartTime = time.UnixMilli(createTime)
 	}
 
-	if cpuPercent, err := p.CPUPercent(); err == nil {
+	if cpuPercent, err := p.CPUPercentWithContext(ctx); err == nil {
 		proc.CPUPercent = cpuPercent
 	}
 
-	if memInfo, err := p.MemoryInfo(); err == nil && memInfo != nil {
+	if memInfo, err := p.MemoryInfoWithContext(ctx); err == nil && memInfo != nil {
 		proc.MemoryMB = float64(memInfo.RSS) / 1024 / 1024
-	}
-
-	if conns, err := p.Connections(); err == nil {
-		proc.Connections = len(conns)
 	}
 
 	return proc

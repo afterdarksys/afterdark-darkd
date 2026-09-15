@@ -3,6 +3,8 @@
 package linux
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -56,47 +58,60 @@ func (p *Platform) ListAvailablePatches(ctx context.Context) ([]platform.Patch, 
 
 // InstallPatch installs a specific patch by ID
 func (p *Platform) InstallPatch(ctx context.Context, patchID string) error {
-	// TODO: Implement using package manager
-	return fmt.Errorf("not implemented on linux yet")
+	patchID = strings.TrimSpace(patchID)
+	if patchID == "" || strings.HasPrefix(patchID, "-") || strings.ContainsAny(patchID, "\r\n\x00") {
+		return fmt.Errorf("invalid Linux patch identifier")
+	}
+	if isDebian() {
+		return exec.CommandContext(ctx, "apt-get", "install", "-y", patchID).Run()
+	}
+	return exec.CommandContext(ctx, "yum", "install", "-y", patchID).Run()
 }
 
 // ListInstalledApplications returns installed applications
 func (p *Platform) ListInstalledApplications(ctx context.Context) ([]platform.Application, error) {
-	var apps []platform.Application
-
-	if p.distro == "ubuntu" || p.distro == "debian" {
-		cmd := exec.CommandContext(ctx, "dpkg-query", "-W", "-f=${Package}|||${Version}\n")
-		output, err := cmd.Output()
-		if err == nil {
-			lines := strings.Split(string(output), "\n")
-			for _, line := range lines {
-				parts := strings.Split(line, "|||")
-				if len(parts) == 2 {
-					apps = append(apps, platform.Application{
-						Name:    strings.TrimSpace(parts[0]),
-						Version: strings.TrimSpace(parts[1]),
-						Vendor:  "Debian/Ubuntu",
-					})
-				}
-			}
-		}
-	} else {
-		// RPM-based (RHEL, Rocky, Fedora)
-		cmd := exec.CommandContext(ctx, "rpm", "-qa", "--qf", "%{NAME}|||%{VERSION}-%{RELEASE}\n")
-		output, err := cmd.Output()
-		if err == nil {
-			lines := strings.Split(string(output), "\n")
-			for _, line := range lines {
-				parts := strings.Split(line, "|||")
-				if len(parts) == 2 {
-					apps = append(apps, platform.Application{
-						Name:    strings.TrimSpace(parts[0]),
-						Version: strings.TrimSpace(parts[1]),
-						Vendor:  "RedHat/Rocky",
-					})
-				}
-			}
-		}
+	if isDebian() {
+		return listAppsDpkg(ctx)
 	}
-	return apps, nil
+	return listAppsRPM(ctx)
+}
+
+func isDebian() bool {
+	_, err := exec.LookPath("apt-get")
+	return err == nil
+}
+
+func listAppsDpkg(ctx context.Context) ([]platform.Application, error) {
+	out, err := exec.CommandContext(ctx, "dpkg-query", "-W",
+		"-f=${Package}|${Version}|${Maintainer}\n").Output()
+	if err != nil {
+		return nil, fmt.Errorf("dpkg-query failed: %w", err)
+	}
+	return parsePipeDelimitedApps(out), nil
+}
+
+func listAppsRPM(ctx context.Context) ([]platform.Application, error) {
+	out, err := exec.CommandContext(ctx, "rpm", "-qa",
+		"--qf", "%{NAME}|%{VERSION}-%{RELEASE}|%{VENDOR}\n").Output()
+	if err != nil {
+		return nil, fmt.Errorf("rpm query failed: %w", err)
+	}
+	return parsePipeDelimitedApps(out), nil
+}
+
+func parsePipeDelimitedApps(out []byte) []platform.Application {
+	var apps []platform.Application
+	scanner := bufio.NewScanner(bytes.NewReader(out))
+	for scanner.Scan() {
+		fields := strings.SplitN(scanner.Text(), "|", 3)
+		if len(fields) < 3 || fields[0] == "" {
+			continue
+		}
+		apps = append(apps, platform.Application{
+			Name:    fields[0],
+			Version: fields[1],
+			Vendor:  fields[2],
+		})
+	}
+	return apps
 }

@@ -2,10 +2,9 @@ package ipc
 
 import (
 	"context"
-	"crypto/hmac"
 	"crypto/rand"
+	"crypto/subtle"
 	"crypto/tls"
-	"encoding/base64"
 	"fmt"
 	"net"
 	"os"
@@ -17,6 +16,7 @@ import (
 
 	pb "github.com/afterdarksys/afterdark-darkd/api/proto/ipc"
 	"github.com/afterdarksys/afterdark-darkd/internal/events"
+	"github.com/afterdarksys/afterdark-darkd/internal/ipc/peercred"
 	"github.com/afterdarksys/afterdark-darkd/internal/service"
 	"github.com/afterdarksys/afterdark-darkd/internal/service/patch"
 	"github.com/afterdarksys/afterdark-darkd/internal/service/threat"
@@ -27,6 +27,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -52,6 +53,13 @@ type Config struct {
 	// RequireAuth enables token-based authentication
 	RequireAuth bool
 
+	// RequirePeerCredentials requires the connecting Unix peer UID to be
+	// allowlisted in addition to the bearer token.
+	RequirePeerCredentials bool
+
+	// AllowedPeerUIDs is the set of operating-system UIDs allowed to connect.
+	AllowedPeerUIDs []uint32
+
 	// MaxConnections limits concurrent connections
 	MaxConnections int
 
@@ -71,11 +79,13 @@ func DefaultConfig() *Config {
 	}
 
 	return &Config{
-		SocketPath:     socketPath,
-		PipeName:       DefaultWindowsPipeName,
-		AuthTokenPath:  defaultTokenPath(),
-		RequireAuth:    true,
-		MaxConnections: 100,
+		SocketPath:             socketPath,
+		PipeName:               DefaultWindowsPipeName,
+		AuthTokenPath:          defaultTokenPath(),
+		RequireAuth:            true,
+		RequirePeerCredentials: true,
+		AllowedPeerUIDs:        []uint32{peercred.CurrentUID()},
+		MaxConnections:         100,
 	}
 }
 
@@ -107,6 +117,9 @@ type Server struct {
 func New(config *Config, registry service.RegistryInterface) (*Server, error) {
 	if config == nil {
 		config = DefaultConfig()
+	}
+	if config.RequirePeerCredentials && len(config.AllowedPeerUIDs) == 0 {
+		config.AllowedPeerUIDs = []uint32{peercred.CurrentUID()}
 	}
 
 	s := &Server{
@@ -148,7 +161,12 @@ func (s *Server) Start(ctx context.Context) error {
 	s.listener = listener
 
 	// Create gRPC server with interceptors
+	transportCreds := credentials.TransportCredentials(insecure.NewCredentials())
+	if runtime.GOOS != "windows" && s.config.TCPAddr == "" {
+		transportCreds = &localCredentials{}
+	}
 	opts := []grpc.ServerOption{
+		grpc.Creds(transportCreds),
 		grpc.ChainUnaryInterceptor(
 			s.loggingInterceptor,
 			s.authInterceptor,
@@ -261,6 +279,7 @@ func (s *Server) createTCPListener() (net.Listener, error) {
 	tlsCfg := &tls.Config{
 		Certificates: []tls.Certificate{*tlsCert},
 		MinVersion:   tls.VersionTLS13,
+		NextProtos:   []string{"h2"},
 	}
 
 	listener, err := tls.Listen("tcp", s.config.TCPAddr, tlsCfg)
@@ -285,8 +304,11 @@ func (s *Server) createUnixListener() (net.Listener, error) {
 
 	// Ensure directory exists
 	socketDir := filepath.Dir(socketPath)
-	if err := os.MkdirAll(socketDir, 0755); err != nil {
+	if err := os.MkdirAll(socketDir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create socket directory: %w", err)
+	}
+	if err := os.Chmod(socketDir, 0700); err != nil {
+		return nil, fmt.Errorf("failed to restrict socket directory: %w", err)
 	}
 
 	// Remove existing socket
@@ -309,7 +331,6 @@ func (s *Server) createUnixListener() (net.Listener, error) {
 	return listener, nil
 }
 
-// createWindowsListener creates a Windows named pipe listener
 // loadAuthToken loads the authentication token from disk
 func (s *Server) loadAuthToken() error {
 	data, err := os.ReadFile(s.config.AuthTokenPath)
@@ -317,8 +338,13 @@ func (s *Server) loadAuthToken() error {
 		return err
 	}
 
+	token := strings.TrimSpace(string(data))
+	if token == "" {
+		return fmt.Errorf("authentication token is empty")
+	}
+
 	s.authMu.Lock()
-	s.authToken = string(data)
+	s.authToken = token
 	s.authMu.Unlock()
 
 	return nil
@@ -327,12 +353,18 @@ func (s *Server) loadAuthToken() error {
 // generateAuthToken generates a new authentication token
 func (s *Server) generateAuthToken() error {
 	// Generate random token
-	token := generateSecureToken(32)
+	token, err := generateSecureToken(32)
+	if err != nil {
+		return fmt.Errorf("failed to generate token: %w", err)
+	}
 
 	// Ensure directory exists
 	tokenDir := filepath.Dir(s.config.AuthTokenPath)
 	if err := os.MkdirAll(tokenDir, 0700); err != nil {
 		return fmt.Errorf("failed to create token directory: %w", err)
+	}
+	if err := os.Chmod(tokenDir, 0700); err != nil {
+		return fmt.Errorf("failed to restrict token directory: %w", err)
 	}
 
 	// Write token file with restricted permissions
@@ -377,9 +409,15 @@ func (s *Server) authInterceptor(
 	handler grpc.UnaryHandler,
 ) (interface{}, error) {
 	if !s.config.RequireAuth {
+		if err := s.validatePeer(ctx); err != nil {
+			return nil, err
+		}
 		return handler(ctx, req)
 	}
 
+	if err := s.validatePeer(ctx); err != nil {
+		return nil, err
+	}
 	if err := s.validateAuth(ctx); err != nil {
 		return nil, err
 	}
@@ -415,9 +453,15 @@ func (s *Server) streamAuthInterceptor(
 	handler grpc.StreamHandler,
 ) error {
 	if !s.config.RequireAuth {
+		if err := s.validatePeer(ss.Context()); err != nil {
+			return err
+		}
 		return handler(srv, ss)
 	}
 
+	if err := s.validatePeer(ss.Context()); err != nil {
+		return err
+	}
 	if err := s.validateAuth(ss.Context()); err != nil {
 		return err
 	}
@@ -425,49 +469,119 @@ func (s *Server) streamAuthInterceptor(
 	return handler(srv, ss)
 }
 
+func (s *Server) validatePeer(ctx context.Context) error {
+	if !s.config.RequirePeerCredentials || runtime.GOOS == "windows" || s.config.TCPAddr != "" {
+		return nil
+	}
+
+	p, ok := peer.FromContext(ctx)
+	if !ok || p.AuthInfo == nil {
+		return status.Error(codes.Unauthenticated, "missing peer credentials")
+	}
+	info, ok := p.AuthInfo.(*localAuthInfo)
+	if !ok {
+		return status.Error(codes.Unauthenticated, "invalid peer credentials")
+	}
+	for _, allowed := range s.config.AllowedPeerUIDs {
+		if info.UID == allowed {
+			return nil
+		}
+	}
+	return status.Error(codes.PermissionDenied, "peer UID is not authorized")
+}
+
 // validateAuth validates the authentication token from context metadata
 func (s *Server) validateAuth(ctx context.Context) error {
+	if !s.config.RequireAuth {
+		return nil
+	}
+
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
 		return status.Error(codes.Unauthenticated, "missing metadata")
 	}
-	tokens := md.Get("authorization")
-	if len(tokens) == 0 {
-		return status.Error(codes.Unauthenticated, "missing authorization token")
+
+	values := md.Get("authorization")
+	if len(values) == 0 {
+		return status.Error(codes.Unauthenticated, "missing authorization header")
 	}
+
+	bearer := values[0]
+	if !strings.HasPrefix(bearer, "Bearer ") {
+		return status.Error(codes.Unauthenticated, "invalid authorization format")
+	}
+	token := strings.TrimPrefix(bearer, "Bearer ")
+
 	s.authMu.RLock()
 	expected := s.authToken
 	s.authMu.RUnlock()
-	if !hmac.Equal([]byte(tokens[0]), []byte("Bearer "+expected)) {
-		return status.Error(codes.Unauthenticated, "invalid authorization token")
+
+	if subtle.ConstantTimeCompare([]byte(token), []byte(expected)) != 1 {
+		return status.Error(codes.Unauthenticated, "invalid token")
 	}
+
 	return nil
 }
 
-// generateSecureToken generates a cryptographically secure token
-func generateSecureToken(length int) string {
-	b := make([]byte, length)
-	if _, err := rand.Read(b); err != nil {
-		panic(fmt.Sprintf("crypto/rand failed: %v", err))
+// generateSecureToken generates a cryptographically secure token.
+// Returns an error if crypto/rand fails. Callers are responsible for
+// passing a valid (non-zero) length; length 0 returns ("", nil).
+func generateSecureToken(length int) (string, error) {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	const maxUnbiased = 248 // floor(256/62)*62 = 4*62 = 248; discard 248-255
+
+	result := make([]byte, length)
+	buf := make([]byte, length*2) // over-sample to reduce re-reads
+	filled := 0
+	for filled < length {
+		if _, err := rand.Read(buf); err != nil {
+			return "", fmt.Errorf("crypto/rand read failed: %w", err)
+		}
+		for _, b := range buf {
+			if filled >= length {
+				break
+			}
+			if b >= maxUnbiased {
+				continue // reject to avoid modulo bias
+			}
+			result[filled] = charset[b%byte(len(charset))]
+			filled++
+		}
 	}
-	return base64.RawURLEncoding.EncodeToString(b)
+	return string(result), nil
 }
 
 // ============================================================================
 // Client Helper
 // ============================================================================
 
-// Dial connects to the IPC server.
-// For Unix sockets the OS enforces access via file permissions; insecure
-// transport is standard practice there. For TCP, TLS is used with the
-// auto-generated server cert as the trusted CA.
-func Dial(ctx context.Context, socketPath string) (*grpc.ClientConn, error) {
-	return DialWithCertDir(ctx, socketPath, "")
+// tokenCreds injects a Bearer token into every outgoing gRPC call.
+type tokenCreds struct {
+	token string
 }
 
-// DialWithCertDir connects to the IPC server, loading the TLS cert from
-// certDir when connecting over TCP. Pass an empty string to use the default.
+func (t *tokenCreds) GetRequestMetadata(_ context.Context, _ ...string) (map[string]string, error) {
+	return map[string]string{"authorization": "Bearer " + t.token}, nil
+}
+
+func (t *tokenCreds) RequireTransportSecurity() bool { return false }
+
+// dialTarget returns the gRPC target string for a socket path.
+func dialTarget(socketPath string) string {
+	if runtime.GOOS == "windows" {
+		return socketPath
+	}
+	return "unix://" + socketPath
+}
+
+func Dial(ctx context.Context, socketPath string) (*grpc.ClientConn, error) {
+	return dialWithOptions(ctx, socketPath, "", authDialOptions())
+}
+
 func DialWithCertDir(ctx context.Context, socketPath, certDir string) (*grpc.ClientConn, error) {
+	return dialWithOptions(ctx, socketPath, certDir, authDialOptions())
+}
+func dialWithOptions(ctx context.Context, socketPath, certDir string, opts []grpc.DialOption) (*grpc.ClientConn, error) {
 	if socketPath == "" {
 		if runtime.GOOS == "windows" {
 			socketPath = DefaultWindowsPipeName
@@ -477,10 +591,9 @@ func DialWithCertDir(ctx context.Context, socketPath, certDir string) (*grpc.Cli
 	}
 
 	if runtime.GOOS == "windows" && strings.HasPrefix(socketPath, `\\.\pipe\`) {
-		return dialWindowsPipe(ctx, socketPath)
+		return dialWindowsPipe(ctx, socketPath, opts...)
 	}
 	var target string
-	opts := authDialOptions()
 
 	isTCP := runtime.GOOS == "windows" || (len(socketPath) > 0 && socketPath[0] != '/')
 
@@ -497,19 +610,70 @@ func DialWithCertDir(ctx context.Context, socketPath, certDir string) (*grpc.Cli
 		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
 	} else {
 		target = "unix://" + socketPath
-		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		opts = append(opts, grpc.WithTransportCredentials(clientTransportCredentials()))
 	}
 
 	return grpc.DialContext(ctx, target, opts...) //nolint:staticcheck
 }
 
-// NewClient creates a new IPC client
+func DialWithToken(ctx context.Context, socketPath, token string) (*grpc.ClientConn, error) {
+	return dialWithOptions(ctx, socketPath, "", []grpc.DialOption{grpc.WithPerRPCCredentials(&tokenCreds{token: token})})
+}
+func clientTransportCredentials() credentials.TransportCredentials {
+	if runtime.GOOS != "windows" {
+		return &localCredentials{}
+	}
+	return insecure.NewCredentials()
+}
+
+type localAuthInfo struct {
+	credentials.CommonAuthInfo
+	UID uint32
+}
+
+func (localAuthInfo) AuthType() string { return "unix-peer" }
+
+type localCredentials struct{}
+
+func (*localCredentials) ClientHandshake(_ context.Context, _ string, conn net.Conn) (net.Conn, credentials.AuthInfo, error) {
+	uid, err := peercred.FromConn(conn)
+	if err != nil {
+		return nil, nil, err
+	}
+	return conn, &localAuthInfo{UID: uid}, nil
+}
+
+func (*localCredentials) ServerHandshake(conn net.Conn) (net.Conn, credentials.AuthInfo, error) {
+	uid, err := peercred.FromConn(conn)
+	if err != nil {
+		return nil, nil, err
+	}
+	return conn, &localAuthInfo{UID: uid}, nil
+}
+
+func (*localCredentials) Info() credentials.ProtocolInfo {
+	return credentials.ProtocolInfo{SecurityProtocol: "unix-peer"}
+}
+
+func (c *localCredentials) Clone() credentials.TransportCredentials { return c }
+
+func (*localCredentials) OverrideServerName(string) error { return nil }
+
+// NewClient creates an IPC client using the default local token when available.
 func NewClient(ctx context.Context, socketPath string) (pb.DaemonServiceClient, error) {
 	conn, err := Dial(ctx, socketPath)
 	if err != nil {
 		return nil, err
 	}
+	return pb.NewDaemonServiceClient(conn), nil
+}
 
+// NewClientWithToken creates a new IPC client that authenticates with a Bearer token.
+func NewClientWithToken(ctx context.Context, socketPath, token string) (pb.DaemonServiceClient, error) {
+	conn, err := DialWithToken(ctx, socketPath, token)
+	if err != nil {
+		return nil, err
+	}
 	return pb.NewDaemonServiceClient(conn), nil
 }
 
@@ -586,15 +750,14 @@ func (s *Server) GetHealth(ctx context.Context, req *pb.HealthRequest) (*pb.Heal
 // GetCompliance returns patch compliance status
 func (s *Server) GetCompliance(ctx context.Context, req *pb.GetComplianceRequest) (*pb.ComplianceResponse, error) {
 	if s.registry == nil {
-		return nil, status.Error(codes.Unavailable, "service registry not available")
+		return nil, status.Error(codes.Unavailable, "registry not available")
 	}
-
 	svc := s.registry.Get("patch_monitor")
 	if svc == nil {
-		return nil, status.Error(codes.Unavailable, "patch_monitor service not available")
+		return nil, status.Error(codes.Unavailable, "patch_monitor not available")
 	}
 
-	patchSvc, ok := svc.(*patch.Service)
+	patchSvc, ok := svc.(patch.Interface)
 	if !ok {
 		return nil, status.Error(codes.Internal, "patch_monitor service type mismatch")
 	}
@@ -616,7 +779,40 @@ func (s *Server) GetCompliance(ctx context.Context, req *pb.GetComplianceRequest
 
 // ListPatches returns patches
 func (s *Server) ListPatches(ctx context.Context, req *pb.ListPatchesRequest) (*pb.PatchListResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "ListPatches is not available")
+	if s.registry == nil {
+		return nil, status.Error(codes.Unavailable, "registry not available")
+	}
+	svc := s.registry.Get("patch_monitor")
+	if svc == nil {
+		return nil, status.Error(codes.Unavailable, "patch_monitor not available")
+	}
+	patchSvc, ok := svc.(patch.Interface)
+	if !ok {
+		return nil, status.Error(codes.Internal, "patch_monitor type assertion failed")
+	}
+	missing := patchSvc.GetMissingPatches()
+	patches := make([]*pb.Patch, 0, len(missing))
+	for _, p := range missing {
+		pbp := &pb.Patch{
+			Id:          p.ID,
+			Name:        p.Name,
+			Description: p.Description,
+			Severity:    p.Severity.String(),
+			Category:    p.Category.String(),
+			ReleasedAt:  &pb.Timestamp{Seconds: p.ReleasedAt.Unix()},
+			Cves:        p.CVEs,
+			KbArticle:   p.KBArticle,
+			SizeBytes:   p.Size,
+		}
+		if p.InstalledAt != nil {
+			pbp.InstalledAt = &pb.Timestamp{Seconds: p.InstalledAt.Unix()}
+		}
+		patches = append(patches, pbp)
+	}
+	return &pb.PatchListResponse{
+		Patches:    patches,
+		TotalCount: int32(len(patches)),
+	}, nil
 }
 
 // TriggerScan triggers a scan
@@ -626,7 +822,7 @@ func (s *Server) TriggerScan(ctx context.Context, req *pb.TriggerScanRequest) (*
 	}
 	switch req.GetScanType() {
 	case "", "patch", "patches":
-		svc, ok := s.registry.Get("patch_monitor").(*patch.Service)
+		svc, ok := s.registry.Get("patch_monitor").(patch.Interface)
 		if !ok {
 			return nil, status.Error(codes.Unavailable, "patch monitor unavailable")
 		}
@@ -646,32 +842,23 @@ func (s *Server) TriggerScan(ctx context.Context, req *pb.TriggerScanRequest) (*
 // GetThreatStatus returns threat intel status
 func (s *Server) GetThreatStatus(ctx context.Context, req *pb.GetThreatStatusRequest) (*pb.ThreatStatusResponse, error) {
 	if s.registry == nil {
-		return nil, status.Error(codes.Unavailable, "service registry not available")
+		return nil, status.Error(codes.Unavailable, "registry not available")
 	}
-
 	svc := s.registry.Get("threat_intel")
 	if svc == nil {
-		return nil, status.Error(codes.Unavailable, "threat_intel service not available")
+		return nil, status.Error(codes.Unavailable, "threat_intel not available")
 	}
-
-	threatSvc, ok := svc.(*threat.Service)
+	ts, ok := svc.(threat.Interface)
 	if !ok {
-		return nil, status.Error(codes.Internal, "threat_intel service type mismatch")
+		return nil, status.Error(codes.Internal, "threat_intel type assertion failed")
 	}
-
-	stats := threatSvc.Stats()
-	lastSync := threatSvc.GetLastSync()
-	nextSync := lastSync.Add(6 * time.Hour)
-
+	st := ts.Stats()
 	return &pb.ThreatStatusResponse{
 		Enabled:         true,
-		BadDomainsCount: int64(stats.DomainCount),
-		BadIpsCount:     int64(stats.IPCount),
-		CacheHitRate:    0.0,
-		LookupsTotal:    0,
-		ThreatsDetected: 0,
-		LastSync:        &pb.Timestamp{Seconds: lastSync.Unix()},
-		NextSync:        &pb.Timestamp{Seconds: nextSync.Unix()},
+		BadDomainsCount: int64(st.DomainCount),
+		BadIpsCount:     int64(st.IPCount),
+		LastSync:        &pb.Timestamp{Seconds: st.LastSync.Unix()},
+		NextSync:        &pb.Timestamp{Seconds: time.Now().Add(6 * time.Hour).Unix()},
 	}, nil
 }
 

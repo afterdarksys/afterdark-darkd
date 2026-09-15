@@ -48,13 +48,14 @@ func (s State) String() string {
 
 // Daemon represents the main daemon process
 type Daemon struct {
-	OnReady  func()
-	config   *models.Config
-	registry *service.Registry
-	state    State
-	mu       sync.RWMutex
-	stopOnce sync.Once
-	logger   *zap.Logger
+	OnReady    func()
+	configPath string
+	config     *models.Config
+	registry   *service.Registry
+	state      State
+	mu         sync.RWMutex
+	stopOnce   sync.Once
+	logger     *zap.Logger
 
 	// Plugin host
 	pluginHost *plugin.Host
@@ -90,12 +91,13 @@ func New(cfg *models.Config) (*Daemon, error) {
 
 	// Initialize IPC server
 	ipcConfig := &ipc.Config{
-		SocketPath:     cfg.IPC.SocketPath,
-		AuthTokenPath:  cfg.IPC.AuthTokenFile,
-		RequireAuth:    cfg.IPC.AuthEnabled,
-		TCPAddr:        cfg.IPC.TCPAddr,
-		PipeName:       cfg.IPC.SocketPath,
-		MaxConnections: 100, // could be config
+		RequirePeerCredentials: cfg.IPC.TCPAddr == "",
+		SocketPath:             cfg.IPC.SocketPath,
+		AuthTokenPath:          cfg.IPC.AuthTokenFile,
+		RequireAuth:            cfg.IPC.AuthEnabled,
+		TCPAddr:                cfg.IPC.TCPAddr,
+		PipeName:               cfg.IPC.SocketPath,
+		MaxConnections:         100, // could be config
 	}
 
 	registry := service.NewRegistry()
@@ -297,9 +299,15 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 }
 
-// Reload reloads the daemon configuration
+// SetConfigPath stores the on-disk config path used by Reload.
+func (d *Daemon) SetConfigPath(path string) {
+	d.mu.Lock()
+	d.configPath = path
+	d.mu.Unlock()
+}
+
+// Reload requires a restart until running services support transactional reconfiguration.
 func (d *Daemon) Reload(ctx context.Context) error {
-	d.logger.Info("reloading configuration")
 	return fmt.Errorf("configuration reload is not implemented; restart with validated configuration")
 }
 

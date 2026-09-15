@@ -32,6 +32,7 @@ var (
 
 var (
 	socketPath string
+	tokenFile  string
 	apiURL     string
 	outputJSON bool
 )
@@ -49,6 +50,7 @@ Use 'darkdadm api' for direct API operations.`,
 	}
 
 	rootCmd.PersistentFlags().StringVarP(&socketPath, "socket", "s", "", "path to daemon socket (platform default when empty)")
+	rootCmd.PersistentFlags().StringVar(&tokenFile, "token-file", ipc.DefaultAuthTokenPath(), "path to IPC auth token file")
 	rootCmd.PersistentFlags().StringVar(&apiURL, "api-url", "https://api.afterdarksys.com", "AfterDark API URL")
 	rootCmd.PersistentFlags().BoolVar(&outputJSON, "json", false, "output in JSON format")
 
@@ -56,7 +58,6 @@ Use 'darkdadm api' for direct API operations.`,
 	rootCmd.AddCommand(loginCmd())
 	rootCmd.AddCommand(registerCmd())
 	rootCmd.AddCommand(logoutCmd())
-	rootCmd.AddCommand(apiCmd())
 	rootCmd.AddCommand(apiCmd())
 	rootCmd.AddCommand(scanCmd())
 	rootCmd.AddCommand(discoveryCmd())
@@ -77,6 +78,7 @@ Use 'darkdadm api' for direct API operations.`,
 	rootCmd.AddCommand(policyCmd())
 	rootCmd.AddCommand(consoleCmd())
 	rootCmd.AddCommand(uiCmd())
+	rootCmd.AddCommand(investigateCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -622,7 +624,7 @@ func statusCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			client, err := ipc.NewClient(ctx, socketPath)
+			client, err := newAdminClient(ctx)
 			if err != nil {
 				// Fallback to offline status if daemon is not running
 				if outputJSON {

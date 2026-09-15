@@ -3,40 +3,45 @@
 // The agent can discover its API key and configuration from multiple sources:
 //
 // 1. Environment Variables:
-//    - AFTERDARK_API_KEY: API key for authentication
-//    - AFTERDARK_API_ENDPOINT: Custom API endpoint
-//    - AFTERDARK_DEVICE_TOKEN: Pre-provisioned device token
+//   - AFTERDARK_API_KEY: API key for authentication
+//   - AFTERDARK_API_ENDPOINT: Custom API endpoint
+//   - AFTERDARK_DEVICE_TOKEN: Pre-provisioned device token
 //
 // 2. Configuration Files (checked in order):
-//    - /etc/afterdark/api-key (Linux/macOS)
-//    - C:\ProgramData\AfterDark\api-key (Windows)
-//    - ~/.afterdark/api-key (user-level)
+//   - /etc/afterdark/api-key (Linux/macOS)
+//   - C:\ProgramData\AfterDark\api-key (Windows)
+//   - ~/.afterdark/api-key (user-level)
 //
 // 3. Cloud Metadata Services:
-//    - AWS EC2 Instance Metadata (tags)
-//    - Azure Instance Metadata
-//    - GCP Instance Metadata
+//   - AWS EC2 Instance Metadata (tags)
+//   - Azure Instance Metadata
+//   - GCP Instance Metadata
 //
 // 4. MDM/Enterprise Deployment:
-//    - Jamf Pro (macOS)
-//    - Microsoft Intune (Windows)
-//    - Ansible/Puppet/Chef pushed configurations
+//   - Jamf Pro (macOS)
+//   - Microsoft Intune (Windows)
+//   - Ansible/Puppet/Chef pushed configurations
 //
 // 5. Enrollment Token:
-//    - One-time use enrollment token from portal
-//    - Exchanges token for permanent API key
+//   - One-time use enrollment token from portal
+//   - Exchanges token for permanent API key
 //
 // 6. Manual Configuration:
-//    - darkd-config GUI helper
-//    - CLI: afterdark-darkdadm config set-key
+//   - darkd-config GUI helper
+//   - CLI: afterdark-darkdadm config set-key
 package autoconfig
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -59,36 +64,36 @@ const (
 	gcpMetadataURL   = "http://metadata.google.internal/computeMetadata/v1/"
 
 	// Environment variables
-	envAPIKey        = "AFTERDARK_API_KEY"
-	envAPIEndpoint   = "AFTERDARK_API_ENDPOINT"
-	envDeviceToken   = "AFTERDARK_DEVICE_TOKEN"
-	envEnrollToken   = "AFTERDARK_ENROLL_TOKEN"
-	envOrgID         = "AFTERDARK_ORG_ID"
-	envDisableCloud  = "AFTERDARK_DISABLE_CLOUD"
+	envAPIKey       = "AFTERDARK_API_KEY"
+	envAPIEndpoint  = "AFTERDARK_API_ENDPOINT"
+	envDeviceToken  = "AFTERDARK_DEVICE_TOKEN"
+	envEnrollToken  = "AFTERDARK_ENROLL_TOKEN"
+	envOrgID        = "AFTERDARK_ORG_ID"
+	envDisableCloud = "AFTERDARK_DISABLE_CLOUD"
 )
 
 // Source represents where configuration was discovered
 type Source string
 
 const (
-	SourceUnknown     Source = "unknown"
-	SourceEnv         Source = "environment"
-	SourceFile        Source = "file"
-	SourceAWS         Source = "aws"
-	SourceAzure       Source = "azure"
-	SourceGCP         Source = "gcp"
-	SourceMDM         Source = "mdm"
-	SourceEnrollment  Source = "enrollment"
-	SourceManual      Source = "manual"
+	SourceUnknown    Source = "unknown"
+	SourceEnv        Source = "environment"
+	SourceFile       Source = "file"
+	SourceAWS        Source = "aws"
+	SourceAzure      Source = "azure"
+	SourceGCP        Source = "gcp"
+	SourceMDM        Source = "mdm"
+	SourceEnrollment Source = "enrollment"
+	SourceManual     Source = "manual"
 )
 
 // Config represents the discovered configuration
 type Config struct {
 	// Authentication
-	APIKey       string `json:"api_key"`
-	APIEndpoint  string `json:"api_endpoint"`
-	DeviceToken  string `json:"device_token,omitempty"`
-	OrgID        string `json:"org_id,omitempty"`
+	APIKey      string `json:"api_key"`
+	APIEndpoint string `json:"api_endpoint"`
+	DeviceToken string `json:"device_token,omitempty"`
+	OrgID       string `json:"org_id,omitempty"`
 
 	// Device identification
 	DeviceID     string `json:"device_id"`
@@ -102,8 +107,8 @@ type Config struct {
 	LastSync     time.Time `json:"last_sync,omitempty"`
 
 	// Feature flags from cloud
-	Features     map[string]bool   `json:"features,omitempty"`
-	Settings     map[string]string `json:"settings,omitempty"`
+	Features map[string]bool   `json:"features,omitempty"`
+	Settings map[string]string `json:"settings,omitempty"`
 
 	// Enterprise configuration
 	EnterpriseConfig *EnterpriseConfig `json:"enterprise_config,omitempty"`
@@ -117,16 +122,16 @@ type EnterpriseConfig struct {
 	Tags           []string `json:"tags,omitempty"`
 
 	// Policy
-	PolicyID       string `json:"policy_id,omitempty"`
-	PolicyVersion  int    `json:"policy_version,omitempty"`
+	PolicyID      string `json:"policy_id,omitempty"`
+	PolicyVersion int    `json:"policy_version,omitempty"`
 
 	// Reporting
 	ReportEndpoint string `json:"report_endpoint,omitempty"`
 	SIEMEndpoint   string `json:"siem_endpoint,omitempty"`
 
 	// Management
-	MDMManaged     bool   `json:"mdm_managed"`
-	MDMProvider    string `json:"mdm_provider,omitempty"`
+	MDMManaged  bool   `json:"mdm_managed"`
+	MDMProvider string `json:"mdm_provider,omitempty"`
 }
 
 // EnrollmentRequest is sent when enrolling a new device
@@ -142,11 +147,11 @@ type EnrollmentRequest struct {
 
 // EnrollmentResponse is returned after successful enrollment
 type EnrollmentResponse struct {
-	Success     bool   `json:"success"`
-	DeviceID    string `json:"device_id"`
-	APIKey      string `json:"api_key"`
-	Message     string `json:"message,omitempty"`
-	ConfigURL   string `json:"config_url,omitempty"`
+	Success   bool   `json:"success"`
+	DeviceID  string `json:"device_id"`
+	APIKey    string `json:"api_key"`
+	Message   string `json:"message,omitempty"`
+	ConfigURL string `json:"config_url,omitempty"`
 }
 
 // AutoConfig handles automatic configuration discovery
@@ -166,6 +171,12 @@ func New(agentVersion string) *AutoConfig {
 	return &AutoConfig{
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return fmt.Errorf("automatic configuration redirects are forbidden")
+			},
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+			},
 		},
 		agentVersion: agentVersion,
 	}
@@ -225,6 +236,9 @@ func (ac *AutoConfig) discoverFromEnv(ctx context.Context) (*Config, error) {
 	if endpoint == "" {
 		endpoint = defaultAPIEndpoint
 	}
+	if err := validateAPIEndpoint(endpoint); err != nil {
+		return nil, fmt.Errorf("invalid API endpoint: %w", err)
+	}
 
 	return &Config{
 		APIKey:       apiKey,
@@ -268,9 +282,9 @@ func (ac *AutoConfig) discoverFromFile(ctx context.Context) (*Config, error) {
 func (ac *AutoConfig) discoverFromCloudMetadata(ctx context.Context) (*Config, error) {
 	// Try each cloud provider
 	providers := []struct {
-		name    string
-		fn      func(context.Context) (*Config, error)
-		source  Source
+		name   string
+		fn     func(context.Context) (*Config, error)
+		source Source
 	}{
 		{"AWS", ac.discoverFromAWS, SourceAWS},
 		{"Azure", ac.discoverFromAzure, SourceAzure},
@@ -554,6 +568,9 @@ func (ac *AutoConfig) SyncConfig(ctx context.Context) error {
 	if ac.config == nil || ac.config.APIKey == "" {
 		return fmt.Errorf("no configuration to sync")
 	}
+	if err := validateAPIEndpoint(ac.config.APIEndpoint); err != nil {
+		return fmt.Errorf("refusing unsafe API endpoint: %w", err)
+	}
 
 	req, _ := http.NewRequestWithContext(ctx, "GET",
 		ac.config.APIEndpoint+configPath, nil)
@@ -570,13 +587,21 @@ func (ac *AutoConfig) SyncConfig(ctx context.Context) error {
 		return fmt.Errorf("sync returned status %d", resp.StatusCode)
 	}
 
-	var cloudConfig struct {
-		Features         map[string]bool       `json:"features"`
-		Settings         map[string]string     `json:"settings"`
-		EnterpriseConfig *EnterpriseConfig     `json:"enterprise_config"`
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return fmt.Errorf("failed to read config: %w", err)
+	}
+	if err := verifySignedConfig(body, resp.Header.Get("X-AfterDark-Config-Signature")); err != nil {
+		return err
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&cloudConfig); err != nil {
+	var cloudConfig struct {
+		Features         map[string]bool   `json:"features"`
+		Settings         map[string]string `json:"settings"`
+		EnterpriseConfig *EnterpriseConfig `json:"enterprise_config"`
+	}
+
+	if err := json.Unmarshal(body, &cloudConfig); err != nil {
 		return fmt.Errorf("failed to parse config: %w", err)
 	}
 
@@ -589,6 +614,65 @@ func (ac *AutoConfig) SyncConfig(ctx context.Context) error {
 		ac.onConfigUpdate(ac.config)
 	}
 
+	return nil
+}
+
+func validateAPIEndpoint(endpoint string) error {
+	u, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" {
+		return fmt.Errorf("endpoint must be an HTTPS URL")
+	}
+	if u.User != nil {
+		return fmt.Errorf("endpoint credentials are not allowed")
+	}
+	if port := u.Port(); port != "" && port != "443" {
+		return fmt.Errorf("endpoint must use HTTPS port 443")
+	}
+	if u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		return fmt.Errorf("endpoint must be an origin without path, query, or fragment")
+	}
+	host := strings.ToLower(u.Hostname())
+	allowed := host == "api.afterdark.io"
+	for _, candidate := range strings.Split(os.Getenv("AFTERDARK_ALLOWED_API_HOSTS"), ",") {
+		if candidate = strings.TrimSpace(candidate); candidate != "" && strings.EqualFold(host, candidate) {
+			allowed = true
+		}
+	}
+	if !allowed {
+		return fmt.Errorf("endpoint host is not allowlisted")
+	}
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") || net.ParseIP(host) != nil {
+		return fmt.Errorf("endpoint host must not be localhost or an IP literal")
+	}
+	addresses, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("resolve endpoint host: %w", err)
+	}
+	for _, address := range addresses {
+		if address.IsLoopback() || address.IsPrivate() || address.IsLinkLocalUnicast() || address.IsLinkLocalMulticast() {
+			return fmt.Errorf("endpoint resolves to a private or link-local address")
+		}
+	}
+	return nil
+}
+
+func verifySignedConfig(body []byte, signatureText string) error {
+	keyText := strings.TrimSpace(os.Getenv("AFTERDARK_CONFIG_PUBLIC_KEY"))
+	if keyText == "" {
+		return fmt.Errorf("signed configuration public key is required")
+	}
+	key, err := base64.StdEncoding.DecodeString(keyText)
+	if err != nil || len(key) != ed25519.PublicKeySize {
+		return fmt.Errorf("invalid configuration public key")
+	}
+	signatureText = strings.TrimSpace(signatureText)
+	if signatureText == "" {
+		return fmt.Errorf("configuration signature is missing")
+	}
+	signature, err := base64.StdEncoding.DecodeString(signatureText)
+	if err != nil || !ed25519.Verify(ed25519.PublicKey(key), body, signature) {
+		return fmt.Errorf("configuration signature verification failed")
+	}
 	return nil
 }
 

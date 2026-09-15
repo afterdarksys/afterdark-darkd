@@ -156,20 +156,20 @@ func (f *MacOSFirewall) initPF(ctx context.Context, defaultDenyIn bool, defaultD
 	conf.WriteString(fmt.Sprintf("include \"%s\"\n", pfRulesFile))
 
 	// Write anchor config
-	if err := os.WriteFile(pfAnchorFile, []byte(conf.String()), 0644); err != nil {
+	if err := os.WriteFile(pfAnchorFile, []byte(conf.String()), 0600); err != nil {
 		return fmt.Errorf("failed to write anchor config: %w", err)
 	}
 
 	// Create empty blocked IPs file if not exists
 	if _, err := os.Stat(pfBlockedFile); os.IsNotExist(err) {
-		if err := os.WriteFile(pfBlockedFile, []byte(""), 0644); err != nil {
+		if err := os.WriteFile(pfBlockedFile, []byte(""), 0600); err != nil {
 			return err
 		}
 	}
 
 	// Create empty rules file if not exists
 	if _, err := os.Stat(pfRulesFile); os.IsNotExist(err) {
-		if err := os.WriteFile(pfRulesFile, []byte("# AfterDark custom rules\n"), 0644); err != nil {
+		if err := os.WriteFile(pfRulesFile, []byte("# AfterDark custom rules\n"), 0600); err != nil {
 			return err
 		}
 	}
@@ -276,7 +276,7 @@ func (f *MacOSFirewall) BlockIP(ctx context.Context, ip string, reason string, s
 }
 
 func (f *MacOSFirewall) addBlockedIPToFile(ip string) error {
-	file, err := os.OpenFile(pfBlockedFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+	file, err := os.OpenFile(pfBlockedFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
 	if err != nil {
 		return err
 	}
@@ -304,7 +304,10 @@ func (f *MacOSFirewall) removeBlockedIPFromFile(ip string) error {
 	}
 
 	// Write back
-	return os.WriteFile(pfBlockedFile, []byte(strings.Join(newLines, "\n")+"\n"), 0644)
+	if err := os.WriteFile(pfBlockedFile, []byte(strings.Join(newLines, "\n")+"\n"), 0600); err != nil {
+		return err
+	}
+	return os.Chmod(pfBlockedFile, 0600)
 }
 
 func (f *MacOSFirewall) UnblockIP(ctx context.Context, ip string) error {
@@ -369,6 +372,9 @@ func (f *MacOSFirewall) IsIPBlocked(ctx context.Context, ip string) (bool, *sdk.
 }
 
 func (f *MacOSFirewall) AddRule(ctx context.Context, rule *sdk.FirewallRule) (*sdk.FirewallRule, error) {
+	if err := validateFirewallRule(rule); err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -410,7 +416,10 @@ func (f *MacOSFirewall) writeRulesFile() error {
 		conf.WriteString(pfRule + "\n\n")
 	}
 
-	return os.WriteFile(pfRulesFile, []byte(conf.String()), 0644)
+	if err := os.WriteFile(pfRulesFile, []byte(conf.String()), 0600); err != nil {
+		return err
+	}
+	return os.Chmod(pfRulesFile, 0600)
 }
 
 func (f *MacOSFirewall) buildPFRule(rule *sdk.FirewallRule) string {
@@ -590,7 +599,7 @@ func (f *MacOSFirewall) SyncBlocklist(ctx context.Context, blockedIPs []sdk.Bloc
 		ips = append(ips, ip)
 	}
 
-	if err := os.WriteFile(pfBlockedFile, []byte(strings.Join(ips, "\n")+"\n"), 0644); err != nil {
+	if err := os.WriteFile(pfBlockedFile, []byte(strings.Join(ips, "\n")+"\n"), 0600); err != nil {
 		return 0, 0, 0, err
 	}
 
@@ -613,7 +622,7 @@ func (f *MacOSFirewall) FlushRules(ctx context.Context, flushBlocks bool, flushR
 		f.blockedIPs = make(map[string]*sdk.BlockedIP)
 
 		// Clear blocked file
-		os.WriteFile(pfBlockedFile, []byte(""), 0644)
+		os.WriteFile(pfBlockedFile, []byte(""), 0600)
 
 		if f.enabled {
 			f.runPfctl(ctx, "-a", pfAnchor, "-t", "afterdark_blocked", "-T", "flush")
@@ -625,7 +634,7 @@ func (f *MacOSFirewall) FlushRules(ctx context.Context, flushBlocks bool, flushR
 		f.rules = make(map[string]*sdk.FirewallRule)
 
 		// Clear rules file
-		os.WriteFile(pfRulesFile, []byte("# AfterDark custom rules\n"), 0644)
+		os.WriteFile(pfRulesFile, []byte("# AfterDark custom rules\n"), 0600)
 
 		if f.enabled {
 			f.reloadRules(ctx)

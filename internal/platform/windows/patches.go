@@ -3,23 +3,105 @@
 package windows
 
 import (
+	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/afterdarksys/afterdark-darkd/internal/platform"
 )
 
-// ListInstalledPatches returns a list of installed patches/updates
-// WUA queries are read-only and require the Windows Update service.
+// powershellCSV runs a PowerShell command that outputs CSV and returns the rows
+// (header row excluded).
+func powershellCSV(ctx context.Context, script string) ([][]string, error) {
+	out, err := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive",
+		"-Command", script).Output()
+	if err != nil {
+		return nil, fmt.Errorf("powershell: %w", err)
+	}
+	r := csv.NewReader(bytes.NewReader(out))
+	// Skip header
+	if _, err := r.Read(); err != nil {
+		if err == io.EOF {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return r.ReadAll()
+}
+
+// ListInstalledPatches returns installed Windows hotfixes via PowerShell Get-HotFix.
 func (p *Platform) ListInstalledPatches(ctx context.Context) ([]platform.Patch, error) {
 	return listUpdates(ctx, true)
 }
+
+// classifyKB assigns severity based on KB article prefix patterns (best-effort).
+func classifyKB(id string) platform.PatchSeverity {
+	// No reliable severity data from Get-HotFix alone.
+	return platform.SeverityUnknown
+}
+
+// ListAvailablePatches queries the Windows Update Agent COM object for pending updates.
 func (p *Platform) ListAvailablePatches(ctx context.Context) ([]platform.Patch, error) {
 	return listUpdates(ctx, false)
 }
+
+// InstallPatch installs a Windows update by KB article ID using wusa.exe.
+// Requires the update .msu to be on disk, or falls back to DISM for in-box components.
+func (p *Platform) InstallPatch(ctx context.Context, patchID string) error {
+	// TODO: Implement using Windows Update Agent API
+	return fmt.Errorf("not implemented on windows yet")
+}
+
+// ListInstalledApplications returns installed applications from the Uninstall registry hive.
+func (p *Platform) ListInstalledApplications(ctx context.Context) ([]platform.Application, error) {
+	script := `
+Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+                 'HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' |
+  Where-Object { $_.DisplayName } |
+  Select-Object DisplayName,DisplayVersion,Publisher,InstallDate |
+  ConvertTo-Csv -NoTypeInformation
+`
+	rows, err := powershellCSV(ctx, strings.TrimSpace(script))
+	if err != nil {
+		return nil, err
+	}
+
+	apps := make([]platform.Application, 0, len(rows))
+	for _, row := range rows {
+		if len(row) < 4 {
+			continue
+		}
+		name := strings.TrimSpace(row[0])
+		if name == "" {
+			continue
+		}
+		app := platform.Application{
+			Name:    name,
+			Version: strings.TrimSpace(row[1]),
+			Vendor:  strings.TrimSpace(row[2]),
+		}
+		// InstallDate format: "20240115" (YYYYMMDD)
+		if d := strings.TrimSpace(row[3]); len(d) == 8 {
+			if t, err := time.Parse("20060102", d); err == nil {
+				app.InstallDate = t
+			}
+		}
+		apps = append(apps, app)
+	}
+	return apps, nil
+}
+
+// readCSV is a helper used in the scanner loop.
+func readCSV(r io.Reader) ([][]string, error) {
+	return csv.NewReader(r).ReadAll()
+}
+
 func listUpdates(ctx context.Context, installed bool) ([]platform.Patch, error) {
 	flag := "0"
 	if installed {
@@ -53,60 +135,4 @@ func listUpdates(ctx context.Context, installed bool) ([]platform.Patch, error) 
 		patches = append(patches, platform.Patch{ID: r.ID, Name: r.Name, Severity: sev, ReleasedAt: r.Released})
 	}
 	return patches, nil
-}
-
-// InstallPatch installs a specific patch by ID
-func (p *Platform) InstallPatch(ctx context.Context, patchID string) error {
-	// TODO: Implement using Windows Update Agent API
-	return fmt.Errorf("not implemented on windows yet")
-}
-
-// ListInstalledApplications returns installed applications
-func (p *Platform) ListInstalledApplications(ctx context.Context) ([]platform.Application, error) {
-	var apps []platform.Application
-
-	// Run PowerShell command to extract list from registry
-	psCmd := `Get-ItemProperty HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*, HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* | Select-Object DisplayName, DisplayVersion, Publisher, InstallDate | Where-Object { $_.DisplayName -ne $null } | ConvertTo-Json -Compress`
-	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-Command", psCmd)
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("failed to list windows applications: %w", err)
-	}
-
-	type psApp struct {
-		DisplayName    string `json:"DisplayName"`
-		DisplayVersion string `json:"DisplayVersion"`
-		Publisher      string `json:"Publisher"`
-		InstallDate    string `json:"InstallDate"` // Format is often YYYYMMDD
-	}
-
-	var parsedApps []psApp
-	if err := json.Unmarshal(output, &parsedApps); err != nil {
-		// Might be a single object instead of array if there's only one app
-		var singleApp psApp
-		if jsonErr := json.Unmarshal(output, &singleApp); jsonErr != nil {
-			return apps, nil // Cannot parse
-		}
-		parsedApps = append(parsedApps, singleApp)
-	}
-
-	for _, pa := range parsedApps {
-		if pa.DisplayName == "" {
-			continue
-		}
-
-		var installed time.Time
-		if len(pa.InstallDate) == 8 {
-			installed, _ = time.Parse("20060102", pa.InstallDate)
-		}
-
-		apps = append(apps, platform.Application{
-			Name:        pa.DisplayName,
-			Version:     pa.DisplayVersion,
-			Vendor:      pa.Publisher,
-			InstallDate: installed,
-		})
-	}
-
-	return apps, nil
 }

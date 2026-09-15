@@ -388,6 +388,10 @@ func parseSize(sizeStr, unit string) int64 {
 
 // InstallPatch installs a specific macOS update
 func (p *Platform) InstallPatch(ctx context.Context, patchID string) error {
+	patchID = strings.TrimSpace(patchID)
+	if patchID == "" || strings.HasPrefix(patchID, "-") || strings.ContainsAny(patchID, "\r\n\x00") {
+		return fmt.Errorf("invalid macOS patch identifier")
+	}
 	// Use softwareupdate -i to install
 	// Note: This requires root privileges
 	cmd := exec.CommandContext(ctx, "softwareupdate", "-i", patchID)
