@@ -21,13 +21,13 @@ const (
 
 // PluginInfo contains metadata about a plugin
 type PluginInfo struct {
-	Name        string       `json:"name"`
-	Version     string       `json:"version"`
-	Type        PluginType   `json:"type"`
-	Description string       `json:"description"`
-	Author      string       `json:"author"`
-	License     string       `json:"license"`
-	Capabilities []string    `json:"capabilities,omitempty"`
+	Name         string     `json:"name"`
+	Version      string     `json:"version"`
+	Type         PluginType `json:"type"`
+	Description  string     `json:"description"`
+	Author       string     `json:"author"`
+	License      string     `json:"license"`
+	Capabilities []string   `json:"capabilities,omitempty"`
 }
 
 // PluginState represents the current state of a plugin
@@ -213,11 +213,11 @@ type FirewallRule struct {
 	ID            string    `json:"id"`
 	Name          string    `json:"name"`
 	Description   string    `json:"description"`
-	Direction     string    `json:"direction"`      // "inbound", "outbound", "both"
-	Action        string    `json:"action"`         // "allow", "deny", "drop", "reject"
-	Protocol      string    `json:"protocol"`       // "tcp", "udp", "icmp", "any"
-	SourceIP      string    `json:"source_ip"`      // CIDR notation
-	SourcePort    string    `json:"source_port"`    // Port or range
+	Direction     string    `json:"direction"`   // "inbound", "outbound", "both"
+	Action        string    `json:"action"`      // "allow", "deny", "drop", "reject"
+	Protocol      string    `json:"protocol"`    // "tcp", "udp", "icmp", "any"
+	SourceIP      string    `json:"source_ip"`   // CIDR notation
+	SourcePort    string    `json:"source_port"` // Port or range
 	DestIP        string    `json:"dest_ip"`
 	DestPort      string    `json:"dest_port"`
 	Interface     string    `json:"interface"`

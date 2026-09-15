@@ -156,7 +156,7 @@ func (c *serviceGRPCClient) Configure(config map[string]interface{}) error {
 		return err
 	}
 	if !resp.Success {
-		return fmt.Errorf(resp.Error)
+		return fmt.Errorf("%s", resp.Error)
 	}
 	return nil
 }
@@ -167,7 +167,7 @@ func (c *serviceGRPCClient) Start(ctx context.Context) error {
 		return err
 	}
 	if !resp.Success {
-		return fmt.Errorf(resp.Error)
+		return fmt.Errorf("%s", resp.Error)
 	}
 	return nil
 }
@@ -178,7 +178,7 @@ func (c *serviceGRPCClient) Stop(ctx context.Context) error {
 		return err
 	}
 	if !resp.Success {
-		return fmt.Errorf(resp.Error)
+		return fmt.Errorf("%s", resp.Error)
 	}
 	return nil
 }
@@ -217,7 +217,7 @@ func (c *serviceGRPCClient) Execute(ctx context.Context, action string, params m
 		return nil, err
 	}
 	if !resp.Success {
-		return nil, fmt.Errorf(resp.Error)
+		return nil, fmt.Errorf("%s", resp.Error)
 	}
 
 	var result map[string]interface{}

@@ -167,7 +167,7 @@ func (c *dataSourceGRPCClient) Configure(config map[string]interface{}) error {
 		return err
 	}
 	if !resp.Success {
-		return fmt.Errorf(resp.Error)
+		return fmt.Errorf("%s", resp.Error)
 	}
 	return nil
 }
@@ -178,7 +178,7 @@ func (c *dataSourceGRPCClient) Connect(ctx context.Context) error {
 		return err
 	}
 	if !resp.Success {
-		return fmt.Errorf(resp.Error)
+		return fmt.Errorf("%s", resp.Error)
 	}
 	return nil
 }
@@ -189,7 +189,7 @@ func (c *dataSourceGRPCClient) Disconnect(ctx context.Context) error {
 		return err
 	}
 	if !resp.Success {
-		return fmt.Errorf(resp.Error)
+		return fmt.Errorf("%s", resp.Error)
 	}
 	return nil
 }
@@ -204,7 +204,7 @@ func (c *dataSourceGRPCClient) Query(ctx context.Context, query string, params m
 		return nil, err
 	}
 	if !resp.Success {
-		return nil, fmt.Errorf(resp.Error)
+		return nil, fmt.Errorf("%s", resp.Error)
 	}
 
 	results := make([]map[string]interface{}, len(resp.ResultsJson))

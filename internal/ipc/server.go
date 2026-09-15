@@ -552,7 +552,7 @@ func (s *Server) GetHealth(ctx context.Context, req *pb.HealthRequest) (*pb.Heal
 			health := svc.Health()
 			services[svc.Name()] = &pb.ServiceHealth{
 				Name:    svc.Name(),
-				Status:  string(health.Status),
+				Status:  health.Status.String(),
 				Message: health.Message,
 				LastCheck: &pb.Timestamp{
 					Seconds: health.LastCheck.Unix(),
@@ -768,7 +768,7 @@ func (s *Server) ListServices(ctx context.Context, req *pb.ListServicesRequest) 
 				Name:    svc.Name(),
 				Status:  "running",
 				Enabled: true,
-				Health:  string(health.Status),
+				Health:  health.Status.String(),
 			})
 		}
 	}

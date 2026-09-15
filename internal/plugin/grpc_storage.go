@@ -182,7 +182,7 @@ func (c *storageGRPCClient) Configure(config map[string]interface{}) error {
 		return err
 	}
 	if !resp.Success {
-		return fmt.Errorf(resp.Error)
+		return fmt.Errorf("%s", resp.Error)
 	}
 	return nil
 }
@@ -193,7 +193,7 @@ func (c *storageGRPCClient) Connect(ctx context.Context) error {
 		return err
 	}
 	if !resp.Success {
-		return fmt.Errorf(resp.Error)
+		return fmt.Errorf("%s", resp.Error)
 	}
 	return nil
 }
@@ -204,7 +204,7 @@ func (c *storageGRPCClient) Disconnect(ctx context.Context) error {
 		return err
 	}
 	if !resp.Success {
-		return fmt.Errorf(resp.Error)
+		return fmt.Errorf("%s", resp.Error)
 	}
 	return nil
 }
@@ -218,7 +218,7 @@ func (c *storageGRPCClient) Get(ctx context.Context, collection, key string) ([]
 		return nil, err
 	}
 	if !resp.Success {
-		return nil, fmt.Errorf(resp.Error)
+		return nil, fmt.Errorf("%s", resp.Error)
 	}
 	if !resp.Found {
 		return nil, nil
@@ -236,7 +236,7 @@ func (c *storageGRPCClient) Set(ctx context.Context, collection, key string, val
 		return err
 	}
 	if !resp.Success {
-		return fmt.Errorf(resp.Error)
+		return fmt.Errorf("%s", resp.Error)
 	}
 	return nil
 }
@@ -250,7 +250,7 @@ func (c *storageGRPCClient) Delete(ctx context.Context, collection, key string) 
 		return err
 	}
 	if !resp.Success {
-		return fmt.Errorf(resp.Error)
+		return fmt.Errorf("%s", resp.Error)
 	}
 	return nil
 }
@@ -264,7 +264,7 @@ func (c *storageGRPCClient) List(ctx context.Context, collection, prefix string)
 		return nil, err
 	}
 	if !resp.Success {
-		return nil, fmt.Errorf(resp.Error)
+		return nil, fmt.Errorf("%s", resp.Error)
 	}
 	return resp.Keys, nil
 }
@@ -279,7 +279,7 @@ func (c *storageGRPCClient) Query(ctx context.Context, collection string, query 
 		return nil, err
 	}
 	if !resp.Success {
-		return nil, fmt.Errorf(resp.Error)
+		return nil, fmt.Errorf("%s", resp.Error)
 	}
 	return resp.Results, nil
 }

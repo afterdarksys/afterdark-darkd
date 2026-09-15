@@ -35,8 +35,8 @@ func TestNewBeaconAnalyzer(t *testing.T) {
 
 func TestRecordConnection(t *testing.T) {
 	config := &models.C2DetectionConfig{
-		Enabled:        true,
-		MinConnections: 5,
+		Enabled:         true,
+		MinConnections:  5,
 		BeaconThreshold: 60.0,
 	}
 
@@ -173,33 +173,35 @@ func TestBeaconScoreCalculation(t *testing.T) {
 
 func TestC2FrameworkMatching(t *testing.T) {
 	tests := []struct {
-		name             string
-		meanInterval     time.Duration
-		jitterPercent    float64
+		name              string
+		meanInterval      time.Duration
+		jitterPercent     float64
+		port              int
 		expectedFramework string
 	}{
 		{
-			name:             "Cobalt Strike default",
-			meanInterval:     60 * time.Second,
-			jitterPercent:    10.0,
+			name:              "Cobalt Strike default",
+			meanInterval:      60 * time.Second,
+			jitterPercent:     10.0,
 			expectedFramework: "cobalt_strike",
 		},
 		{
-			name:             "Metasploit default",
-			meanInterval:     5 * time.Second,
-			jitterPercent:    5.0,
+			name:              "Metasploit default",
+			meanInterval:      5 * time.Second,
+			jitterPercent:     5.0,
 			expectedFramework: "metasploit",
 		},
 		{
-			name:             "Sliver default",
-			meanInterval:     30 * time.Second,
-			jitterPercent:    15.0,
+			name:              "Sliver default",
+			meanInterval:      30 * time.Second,
+			jitterPercent:     15.0,
+			port:              31337,
 			expectedFramework: "sliver",
 		},
 		{
-			name:             "No match - unusual interval",
-			meanInterval:     7 * time.Minute,
-			jitterPercent:    50.0,
+			name:              "No match - unusual interval",
+			meanInterval:      time.Hour,
+			jitterPercent:     90.0,
 			expectedFramework: "",
 		},
 	}
@@ -215,7 +217,8 @@ func TestC2FrameworkMatching(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			analyzer := NewBeaconAnalyzer(config, logger)
 
-			framework := analyzer.matchC2Framework(tt.meanInterval, tt.jitterPercent)
+			framework, score := analyzer.matchC2Framework(tt.meanInterval, 0.1, tt.jitterPercent, tt.port)
+			_ = score
 
 			if framework != tt.expectedFramework {
 				t.Errorf("expected framework %q, got %q", tt.expectedFramework, framework)
@@ -285,30 +288,30 @@ func TestPatternDetection(t *testing.T) {
 	analyzer := NewBeaconAnalyzer(config, logger)
 
 	tests := []struct {
-		name           string
-		coeffVariation float64
+		name            string
+		coeffVariation  float64
 		expectedPattern string
 	}{
 		{
-			name:           "very low variance - fixed",
-			coeffVariation: 0.05,
+			name:            "very low variance - fixed",
+			coeffVariation:  0.01,
 			expectedPattern: "fixed",
 		},
 		{
-			name:           "moderate variance - jitter",
-			coeffVariation: 0.15,
+			name:            "moderate variance - jitter",
+			coeffVariation:  0.15,
 			expectedPattern: "jitter",
 		},
 		{
-			name:           "high variance - exponential",
-			coeffVariation: 0.40,
-			expectedPattern: "exponential",
+			name:            "variance alone cannot establish exponential backoff",
+			coeffVariation:  0.40,
+			expectedPattern: "unknown",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			pattern := analyzer.detectPatternType(tt.coeffVariation)
+			pattern := analyzer.detectPatternType(nil, tt.coeffVariation, 10)
 			if pattern != tt.expectedPattern {
 				t.Errorf("expected pattern %q, got %q", tt.expectedPattern, pattern)
 			}

@@ -3,6 +3,7 @@ package memscan
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/afterdarksys/afterdark-darkd/internal/models"
@@ -13,10 +14,10 @@ import (
 // Note: Full implementation requires CGO with libyara
 // This is a simplified implementation that can be extended
 type YARAScanner struct {
-	logger    *zap.Logger
-	rulesDir  string
-	rules     []YARARule
-	compiled  bool
+	logger   *zap.Logger
+	rulesDir string
+	rules    []YARARule
+	compiled bool
 }
 
 // YARARule represents a loaded YARA rule
@@ -110,7 +111,7 @@ func (s *YARAScanner) loadRuleFile(path string) error {
 
 	// Simple rule extraction (not a full YARA parser)
 	content := string(data)
-	ruleStarts := strings.Split(content, "rule ")
+	ruleStarts := regexp.MustCompile(`(?m)^[ \t]*(?:private[ \t]+|global[ \t]+)?rule[ \t]+`).Split(content, -1)
 
 	for i, rulePart := range ruleStarts {
 		if i == 0 || len(rulePart) < 10 {

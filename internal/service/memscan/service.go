@@ -2,6 +2,7 @@ package memscan
 
 import (
 	"context"
+	"encoding/binary"
 	"math"
 	"runtime"
 	"sort"
@@ -712,8 +713,8 @@ func containsPEHeader(data []byte) bool {
 		return false
 	}
 	// Check PE offset
-	peOffset := int(data[0x3C]) | int(data[0x3D])<<8
-	if peOffset < 0 || peOffset+4 > len(data) {
+	peOffset := uint64(binary.LittleEndian.Uint32(data[0x3C:0x40]))
+	if peOffset+4 > uint64(len(data)) {
 		return false
 	}
 	// Check for PE signature

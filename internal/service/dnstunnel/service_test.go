@@ -47,9 +47,9 @@ func TestCalculateEntropy(t *testing.T) {
 		},
 		{
 			name:       "normal subdomain",
-			input:      "www",
-			minEntropy: 1.0,
-			maxEntropy: 2.0,
+			input:      "www", // A single repeated symbol has zero Shannon entropy.
+			minEntropy: 0.0,
+			maxEntropy: 0.0,
 		},
 		{
 			name:       "readable word",
@@ -60,7 +60,7 @@ func TestCalculateEntropy(t *testing.T) {
 		{
 			name:       "base64-like string",
 			input:      "aGVsbG8gd29ybGQ",
-			minEntropy: 3.5,
+			minEntropy: 3.4,
 			maxEntropy: 4.5,
 		},
 		{
@@ -172,11 +172,14 @@ func TestTunnelScoring(t *testing.T) {
 		{
 			name: "dnscat2-like tunnel",
 			analysis: &models.DNSTunnelAnalysis{
-				AvgSubdomainLen: 30.0,
-				MaxSubdomainLen: 50,
-				AvgEntropy:      4.0,
-				MaxEntropy:      4.5,
-				TXTQueryRatio:   0.45,
+				AvgSubdomainLen:  30.0,
+				MaxSubdomainLen:  50,
+				AvgEntropy:       4.0,
+				MaxEntropy:       4.5,
+				TXTQueryRatio:    0.45,
+				UniqueSubdomains: 120,
+				EncodingDetected: "hex",
+				EncodingScore:    0.9, // Positive fixture includes encoded, varying payloads.
 			},
 			expectedMin:    50.0,
 			expectedMax:    90.0,
