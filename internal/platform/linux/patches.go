@@ -4,7 +4,9 @@ package linux
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"github.com/afterdarksys/afterdark-darkd/internal/platform/packages"
 	"os/exec"
 	"strings"
 
@@ -13,16 +15,43 @@ import (
 
 // ListInstalledPatches returns a list of installed patches/updates
 func (p *Platform) ListInstalledPatches(ctx context.Context) ([]platform.Patch, error) {
-	// TODO: Implement using apt/yum/dnf logs or queries
-	// Debian/Ubuntu: grep " install " /var/log/dpkg.log
-	// RHEL: rpm -qa --last
-	return nil, fmt.Errorf("patch assessment is unavailable on linux")
+	var cmd *exec.Cmd
+	switch p.distro {
+	case "ubuntu", "debian":
+		cmd = exec.CommandContext(ctx, "dpkg-query", "-W", "-f=${Package}|||${Version}\n")
+	case "rhel", "centos", "rocky", "almalinux", "fedora":
+		cmd = exec.CommandContext(ctx, "rpm", "-qa", "--qf", "%{NAME}.%{ARCH}|||%{VERSION}-%{RELEASE}\n")
+	default:
+		return nil, fmt.Errorf("unsupported package manager for %s", p.distro)
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("installed packages: %w", err)
+	}
+	return packages.Installed(string(out))
 }
-
-// ListAvailablePatches returns a list of available updates
 func (p *Platform) ListAvailablePatches(ctx context.Context) ([]platform.Patch, error) {
-	// TODO: Implement using apt-get -s upgrade or yum check-update
-	return nil, fmt.Errorf("patch assessment is unavailable on linux")
+	switch p.distro {
+	case "ubuntu", "debian":
+		out, err := exec.CommandContext(ctx, "apt-get", "-s", "-o", "Debug::NoLocking=1", "upgrade").Output()
+		if err != nil {
+			return nil, fmt.Errorf("apt assessment: %w", err)
+		}
+		return packages.APT(string(out))
+	case "rhel", "centos", "rocky", "almalinux", "fedora":
+		out, err := exec.CommandContext(ctx, "dnf", "-q", "--cacheonly", "check-update").Output()
+		var exit *exec.ExitError
+		if err != nil && (!errors.As(err, &exit) || exit.ExitCode() != 100) {
+			return nil, fmt.Errorf("dnf assessment: %w", err)
+		}
+		updates, err := packages.DNF(string(out))
+		if exit != nil && exit.ExitCode() == 100 && len(updates) == 0 {
+			return nil, fmt.Errorf("dnf reported updates but no candidates could be parsed")
+		}
+		return updates, err
+	default:
+		return nil, fmt.Errorf("unsupported package manager for %s", p.distro)
+	}
 }
 
 // InstallPatch installs a specific patch by ID

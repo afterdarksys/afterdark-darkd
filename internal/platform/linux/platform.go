@@ -184,10 +184,7 @@ func (p *Platform) SetDNSServers(servers []string) error {
 // EnableFirewall enables the Linux firewall.
 // Tries nftables first, falls back to iptables.
 func (p *Platform) EnableFirewall() error {
-	if err := exec.CommandContext(context.Background(), "nft", "add", "table", "inet", "filter").Run(); err == nil {
-		return nil
-	}
-	return exec.CommandContext(context.Background(), "iptables", "-P", "INPUT", "DROP").Run()
+	return fmt.Errorf("explicit firewall plugin policy required; global INPUT policy will not be changed")
 }
 
 // DisableICMP controls whether the host responds to ICMP echo requests.
