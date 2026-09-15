@@ -120,7 +120,8 @@ func (r *Registry) StartAll(ctx context.Context) error {
 	for _, svc := range r.All() {
 		if err := svc.Start(ctx); err != nil {
 			cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			_ = svc.Stop(cleanup)
+			// A failing Start must release its own partial resources. Only stop
+			// services that reached running, otherwise Stop may wait on an unstarted worker.
 			_ = r.StopAll(cleanup)
 			cancel()
 			return fmt.Errorf("failed to start service %s: %w", svc.Name(), err)

@@ -45,6 +45,9 @@ func ValidateConfig(cfg *models.Config) error {
 		errors = append(errors, "daemon.data_dir is required")
 	}
 
+	if cfg.API.DarkAPI.TelemetryEnabled && cfg.Services.SIEM.Enabled {
+		errors = append(errors, "choose DarkAPI telemetry or generic SIEM export; independent delivery cursors are not yet implemented")
+	}
 	// Validate API config
 	if cfg.API.AfterDark.URL == "" {
 		errors = append(errors, "api.afterdark.url is required")

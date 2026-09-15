@@ -34,10 +34,12 @@ type APIConfig struct {
 
 // EndpointConfig holds configuration for a single API endpoint
 type EndpointConfig struct {
-	URL     string        `yaml:"url" json:"url"`
-	APIKey  string        `yaml:"api_key" json:"api_key,omitempty"`
-	Timeout time.Duration `yaml:"timeout" json:"timeout"`
-	Retry   RetryConfig   `yaml:"retry" json:"retry"`
+	CredentialFile   string        `yaml:"credential_file" json:"credential_file" mapstructure:"credential_file"`
+	TelemetryEnabled bool          `yaml:"telemetry_enabled" json:"telemetry_enabled" mapstructure:"telemetry_enabled"`
+	URL              string        `yaml:"url" json:"url"`
+	APIKey           string        `yaml:"api_key" json:"api_key,omitempty"`
+	Timeout          time.Duration `yaml:"timeout" json:"timeout"`
+	Retry            RetryConfig   `yaml:"retry" json:"retry"`
 }
 
 // RetryConfig holds retry behavior configuration

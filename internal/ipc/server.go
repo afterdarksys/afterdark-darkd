@@ -680,7 +680,7 @@ func (s *Server) CheckDomain(ctx context.Context, req *pb.CheckDomainRequest) (*
 	if s.registry == nil || s.registry.Get("threat_intel") == nil {
 		return nil, status.Error(codes.Unavailable, "threat intelligence unavailable")
 	}
-	if t, ok := s.registry.Get("threat_intel").(*threat.Service); !ok || t.GetLastSync().IsZero() {
+	if t, ok := s.registry.Get("threat_intel").(*threat.Service); !ok || t.GetLastSync().IsZero() || t.Health().Status != service.HealthHealthy {
 		return nil, status.Error(codes.Unavailable, "threat intelligence has no successful sync")
 	}
 
@@ -716,7 +716,7 @@ func (s *Server) CheckIP(ctx context.Context, req *pb.CheckIPRequest) (*pb.Threa
 	if s.registry == nil || s.registry.Get("threat_intel") == nil {
 		return nil, status.Error(codes.Unavailable, "threat intelligence unavailable")
 	}
-	if t, ok := s.registry.Get("threat_intel").(*threat.Service); !ok || t.GetLastSync().IsZero() {
+	if t, ok := s.registry.Get("threat_intel").(*threat.Service); !ok || t.GetLastSync().IsZero() || t.Health().Status != service.HealthHealthy {
 		return nil, status.Error(codes.Unavailable, "threat intelligence has no successful sync")
 	}
 

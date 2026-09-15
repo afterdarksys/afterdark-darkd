@@ -1,0 +1,73 @@
+# Windows lab configuration. Review and qualify before fleet deployment.
+daemon:
+  data_dir: ${PROGRAMDATA}/AfterDark
+  pid_file: ""
+  plugin_dir: ${PROGRAMDATA}/AfterDark/plugins
+storage:
+  backend: json
+  path: ${PROGRAMDATA}/AfterDark/data
+ipc:
+  socket_path: '\\.\pipe\afterdark-darkd'
+  auth_enabled: true
+  auth_token_file: ${PROGRAMDATA}/AfterDark/.auth_token
+api:
+  darkapi:
+    url: https://api.darkapi.io
+    api_key: ${DARKAPI_API_KEY}
+    credential_file: "" # Set after enrollment, e.g. C:/ProgramData/AfterDark/darkapi.json
+    telemetry_enabled: false
+services:
+  patch_monitor:
+    enabled: true
+  process_monitor:
+    enabled: true
+  threat_intel:
+    enabled: false
+  baseline_scanner:
+    enabled: false
+  network_monitor:
+    enabled: false
+  detonation_chamber:
+    enabled: false
+  c2_detection:
+    enabled: false
+  dns_tunnel_detection:
+    enabled: false
+  memory_scanner:
+    enabled: false
+  integrity_monitor:
+    enabled: false
+  persistence_monitor:
+    enabled: false
+  sys_monitor:
+    enabled: false
+  activity_monitor:
+    enabled: false
+  ml_engine:
+    enabled: false
+  canary:
+    enabled: false
+  honeypot:
+    enabled: false
+  device_control:
+    enabled: false
+  dlp:
+    enabled: false
+  network_drift:
+    enabled: false
+  cloud_metadata:
+    enabled: false
+  app_lockdown:
+    enabled: false
+  scripting:
+    enabled: false
+  siem:
+    enabled: false
+  ebpf:
+    enabled: false
+  esf:
+    enabled: false
+  etw:
+    enabled: true
+  registry:
+    enabled: false

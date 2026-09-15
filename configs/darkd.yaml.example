@@ -15,6 +15,8 @@ api:
   darkapi:
     url: https://api.darkapi.io
     api_key: ${DARKAPI_API_KEY}
+    credential_file: ${DARKAPI_CREDENTIAL_FILE}
+    telemetry_enabled: false  # Enroll first; see DARKAPI_INTEGRATION.md
     timeout: 30s
     retry:
       max_attempts: 3

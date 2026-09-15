@@ -1,7 +1,7 @@
 # Enhancement roadmap: advanced macOS and Linux, Windows foundation
 
 **Date:** 2026-09-15  
-**Status:** Proposed implementation plan; no phases implemented by this review.  
+**Status:** Implementation in progress. See [nine-commit delivery status](IMPLEMENTATION.md) for implemented slices and remaining exit gates.
 **Baseline:** [Code review](CODE_REVIEW.md), commit `97345b8714e6678c61b6a322af8a8916a869e408`.
 
 ## Intended outcome

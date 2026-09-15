@@ -11,6 +11,8 @@ findings:
 
 # Code review: platform readiness
 
+This is the baseline review. See [implementation status](IMPLEMENTATION.md) for subsequent fixes and remaining work. Original source line numbers below refer to the reviewed commit.
+
 ## Assessment
 
 The repository has useful Go services, platform adapters, a plugin SDK, and detection algorithms. It is not yet a reliable advanced endpoint security agent: some controls report success without taking action, telemetry paths are disconnected, and native platform builds have blockers. Repairing those contracts should precede adding more detectors.

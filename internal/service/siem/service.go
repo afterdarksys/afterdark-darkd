@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/afterdarksys/afterdark-darkd/internal/api/darkapi"
 	"github.com/afterdarksys/afterdark-darkd/internal/events"
 	"github.com/afterdarksys/afterdark-darkd/internal/service"
 	"net/http"
@@ -16,19 +17,21 @@ import (
 const ServiceName = "siem_forwarder"
 
 type Config struct {
+	DarkAPI   *darkapi.Client
 	Enabled   bool   `mapstructure:"enabled"`
 	URL       string `mapstructure:"url"`
 	AuthToken string `mapstructure:"auth_token"`
 	BatchSize int    `mapstructure:"batch_size"`
 }
 type Service struct {
-	mu       sync.Mutex
-	config   Config
-	registry service.RegistryInterface
-	cancel   context.CancelFunc
-	done     chan struct{}
-	lastErr  error
-	client   *http.Client
+	mu            sync.Mutex
+	config        Config
+	registry      service.RegistryInterface
+	cancel        context.CancelFunc
+	done          chan struct{}
+	lastErr       error
+	lastHeartbeat time.Time
+	client        *http.Client
 }
 
 func New(c *Config, r service.RegistryInterface) (*Service, error) {
@@ -48,8 +51,11 @@ func (s *Service) Start(ctx context.Context) error {
 		return nil
 	}
 	u, err := url.Parse(s.config.URL)
-	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+	if s.config.DarkAPI == nil && (err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https")) {
 		return fmt.Errorf("invalid SIEM URL")
+	}
+	if s.config.DarkAPI != nil && !s.config.DarkAPI.HasDeviceCredentials() {
+		return fmt.Errorf("DarkAPI telemetry requires enrolled device credentials")
 	}
 	if _, ok := s.registry.Get(events.ServiceName).(*events.Store); !ok {
 		return fmt.Errorf("durable event store required")
@@ -128,9 +134,30 @@ func (s *Service) run(ctx context.Context) {
 }
 func (s *Service) forward(ctx context.Context) error {
 	store := s.registry.Get(events.ServiceName).(*events.Store)
+	if cloud := s.config.DarkAPI; cloud != nil && time.Since(s.lastHeartbeat) > time.Minute {
+		if err := cloud.Heartbeat(ctx); err != nil {
+			return err
+		}
+		s.lastHeartbeat = time.Now()
+	}
 	batch, err := store.List(ctx, s.config.BatchSize, true, time.Time{}, "", "")
 	if err != nil || len(batch) == 0 {
 		return err
+	}
+	if cloud := s.config.DarkAPI; cloud != nil {
+		for _, event := range batch {
+			data, err := json.Marshal(event)
+			if err != nil {
+				return err
+			}
+			if err := cloud.ReportTelemetry(ctx, &darkapi.TelemetryReport{EventID: event.ID, Event: data}); err != nil {
+				return err
+			}
+			if err := store.Ack(ctx, []string{event.ID}); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	data, err := json.Marshal(batch)
 	if err != nil {

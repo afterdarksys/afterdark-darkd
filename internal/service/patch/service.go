@@ -20,11 +20,12 @@ const ServiceName = "patch_monitor"
 
 // Service implements the patch monitoring service
 type Service struct {
-	config    *models.PatchMonitorConfig
-	platform  platform.Platform
-	store     storage.Store
-	apiClient *afterdark.Client
-	logger    *zap.Logger
+	OnInventory func(*afterdark.TelemetryReport) error
+	config      *models.PatchMonitorConfig
+	platform    platform.Platform
+	store       storage.Store
+	apiClient   *afterdark.Client
+	logger      *zap.Logger
 
 	mu             sync.RWMutex
 	lastScan       time.Time
@@ -271,7 +272,7 @@ func (s *Service) performScan(ctx context.Context) {
 	}
 
 	// Build and submit telemetry report
-	if s.apiClient != nil {
+	if s.OnInventory != nil {
 		hostname, _ := s.platform.GetHostname()
 		osInfo, err := s.platform.GetOSInfo()
 
@@ -294,7 +295,7 @@ func (s *Service) performScan(ctx context.Context) {
 		}
 
 		telemetry := &afterdark.TelemetryReport{
-			SystemID:         "local-agent", // Will typically come from identity service
+			SystemID:         "", // The event store supplies endpoint identity; export uses enrolled device identity.
 			Hostname:         hostname,
 			OSFamily:         osFamily,
 			OSVersion:        osVer,
@@ -303,10 +304,10 @@ func (s *Service) performScan(ctx context.Context) {
 			SoftwareCatalog:  apps,
 		}
 
-		if err := s.apiClient.ReportTelemetry(ctx, telemetry); err != nil {
-			s.logger.Error("failed to submit telemetry report to DarkAPI", zap.Error(err))
+		if err := s.OnInventory(telemetry); err != nil {
+			s.logger.Error("failed to persist inventory event", zap.Error(err))
 		} else {
-			s.logger.Info("successfully submitted telemetry report")
+			s.logger.Info("persisted inventory event")
 		}
 	}
 

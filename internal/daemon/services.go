@@ -78,11 +78,15 @@ func (d *Daemon) InitializeServices() error {
 
 	// Initialize DarkAPI client
 	darkAPI := darkapi.New(&darkapi.Config{
-		BaseURL: cfg.API.DarkAPI.URL,
-		APIKey:  cfg.API.DarkAPI.APIKey,
-		Timeout: cfg.API.DarkAPI.Timeout,
+		BaseURL:        cfg.API.DarkAPI.URL,
+		CredentialFile: cfg.API.DarkAPI.CredentialFile,
+		APIKey:         cfg.API.DarkAPI.APIKey,
+		Timeout:        cfg.API.DarkAPI.Timeout,
 	})
 
+	if err := darkAPI.Validate(); err != nil {
+		return fmt.Errorf("DarkAPI configuration: %w", err)
+	}
 	id, _, err := identity.GetOrCreateIdentity()
 	if err != nil {
 		return fmt.Errorf("endpoint identity: %w", err)
@@ -146,6 +150,9 @@ func (d *Daemon) InitializeServices() error {
 	// 5. Patch monitor (depends on platform)
 	if cfg.Services.PatchMonitor.Enabled && plat != nil {
 		patchSvc := patch.New(&cfg.Services.PatchMonitor, plat, store, apiClient)
+		patchSvc.OnInventory = func(report *afterdark.TelemetryReport) error {
+			return events.Emit(d.registry, "patch_monitor", "inventory.software", "info", report)
+		}
 		if err := d.registry.Register(patchSvc); err != nil {
 			d.logger.Error("failed to register patch service", zap.Error(err))
 		}
@@ -380,7 +387,7 @@ func (d *Daemon) InitializeServices() error {
 	}
 
 	// 23. SIEM Forwarder
-	if cfg.Services.SIEM.Enabled {
+	if cfg.Services.SIEM.Enabled || cfg.API.DarkAPI.TelemetryEnabled {
 		siemCfg := &siem.Config{
 			Enabled:   cfg.Services.SIEM.Enabled,
 			URL:       cfg.Services.SIEM.URL,
@@ -388,6 +395,9 @@ func (d *Daemon) InitializeServices() error {
 			BatchSize: cfg.Services.SIEM.BatchSize,
 		}
 
+		if cfg.API.DarkAPI.TelemetryEnabled {
+			siemCfg.DarkAPI = darkAPI
+		}
 		siemSvc, err := siem.New(siemCfg, d.registry)
 		if err != nil {
 			d.logger.Error("failed to create siem service", zap.Error(err))

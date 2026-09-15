@@ -120,10 +120,11 @@ func (vc *ViperConfig) WatchConfig(onChange func(cfg *models.Config)) {
 // setDefaults configures Viper defaults from models.DefaultConfig
 func setDefaults(v *viper.Viper) {
 	// Daemon defaults
+	defaults := models.DefaultConfig()
 	v.SetDefault("daemon.log_level", "info")
-	v.SetDefault("daemon.data_dir", "/var/lib/afterdark")
-	v.SetDefault("daemon.pid_file", "/var/run/afterdark/darkd.pid")
-	v.SetDefault("daemon.plugin_dir", "/var/lib/afterdark-darkd/plugins")
+	v.SetDefault("daemon.data_dir", defaults.Daemon.DataDir)
+	v.SetDefault("daemon.pid_file", defaults.Daemon.PIDFile)
+	v.SetDefault("daemon.plugin_dir", defaults.Daemon.PluginDir)
 
 	// API defaults - AfterDark
 	v.SetDefault("api.afterdark.url", "https://api.afterdarksys.com")
@@ -132,6 +133,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("api.afterdark.retry.initial_wait", time.Second)
 	v.SetDefault("api.afterdark.retry.max_wait", 30*time.Second)
 
+	v.SetDefault("api.darkapi.credential_file", "")
+	v.SetDefault("api.darkapi.telemetry_enabled", false)
 	// API defaults - DarkAPI
 	v.SetDefault("api.darkapi.url", "https://api.darkapi.io")
 	v.SetDefault("api.darkapi.timeout", 30*time.Second)
@@ -210,14 +213,14 @@ func setDefaults(v *viper.Viper) {
 
 	// Storage
 	v.SetDefault("storage.backend", "json")
-	v.SetDefault("storage.path", "/var/lib/afterdark/data")
+	v.SetDefault("storage.path", defaults.Storage.Path)
 	v.SetDefault("storage.backup_enabled", true)
 	v.SetDefault("storage.backup_retention", 720*time.Hour) // 30 days
 
 	// IPC
-	v.SetDefault("ipc.socket_path", "/var/run/afterdark/darkd.sock")
+	v.SetDefault("ipc.socket_path", defaults.IPC.SocketPath)
 	v.SetDefault("ipc.auth_enabled", true)
-	v.SetDefault("ipc.auth_token_file", "/var/lib/afterdark/.auth_token")
+	v.SetDefault("ipc.auth_token_file", defaults.IPC.AuthTokenFile)
 }
 
 // BindFlags binds cobra command flags to viper for CLI integration

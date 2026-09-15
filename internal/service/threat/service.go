@@ -25,6 +25,7 @@ type Service struct {
 
 	mu          sync.RWMutex
 	lastSync    time.Time
+	syncError   error
 	badDomains  map[string]*darkapi.ThreatInfo
 	badIPs      map[string]*darkapi.ThreatInfo
 	domainCount int
@@ -104,6 +105,10 @@ func (s *Service) Health() service.HealthStatus {
 		message = "no threat data loaded"
 	}
 
+	if s.syncError != nil {
+		status = service.HealthDegraded
+		message = s.syncError.Error()
+	}
 	return service.HealthStatus{
 		Status:    status,
 		Message:   message,
@@ -246,18 +251,14 @@ func (s *Service) performSync(ctx context.Context) {
 	s.logger.Info("starting threat intel sync")
 	startTime := time.Now()
 
-	// Get bad domains
-	domainList, err := s.apiClient.GetBadDomains(ctx)
+	domainList, ipList, err := s.apiClient.ThreatSnapshot(ctx, time.Time{})
 	if err != nil {
-		s.logger.Error("failed to fetch bad domains", zap.Error(err))
+		s.mu.Lock()
+		s.syncError = err
+		s.mu.Unlock()
+		s.logger.Error("failed to fetch threat snapshot", zap.Error(err))
+		return
 	}
-
-	// Get bad IPs
-	ipList, err := s.apiClient.GetBadIPs(ctx)
-	if err != nil {
-		s.logger.Error("failed to fetch bad IPs", zap.Error(err))
-	}
-
 	// Update in-memory cache
 	s.mu.Lock()
 	if domainList != nil {
@@ -282,6 +283,7 @@ func (s *Service) performSync(ctx context.Context) {
 		s.ipCount = len(s.badIPs)
 	}
 	s.lastSync = time.Now()
+	s.syncError = nil
 	s.mu.Unlock()
 
 	// Persist to storage

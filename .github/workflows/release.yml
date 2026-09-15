@@ -20,30 +20,42 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version-file: go.mod
 
       - name: Get version
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
+      - name: Core regression gate
+        run: make test vet
+
       - name: Build all platforms
         run: VERSION=${{ steps.version.outputs.VERSION }} make build-all
+
+      - name: Archive each platform
+        run: |
+          cd dist
+          for platform in linux-* darwin-* windows-*; do
+            tar -czf "$platform.tar.gz" "$platform"
+          done
 
       - name: Create checksums
         run: |
           cd dist
-          sha256sum * > checksums.txt
+          sha256sum *.tar.gz > checksums.txt
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            dist/*
+            dist/*.tar.gz
+            dist/checksums.txt
           generate_release_notes: true
-          draft: false
+          draft: true
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
 
   docker:
+    if: vars.PUBLISH_DOCKER_IMAGES == 'true'
     name: Docker
     runs-on: ubuntu-latest
     needs: release

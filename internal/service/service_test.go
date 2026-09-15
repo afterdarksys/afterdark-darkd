@@ -35,7 +35,7 @@ func TestStartupRollback(t *testing.T) {
 	if r.StartAll(context.Background()) == nil {
 		t.Fatal("expected failure")
 	}
-	want := []string{"start:a", "start:b", "stop:b", "stop:a"}
+	want := []string{"start:a", "start:b", "stop:a"}
 	if len(log) != len(want) {
 		t.Fatal(log)
 	}

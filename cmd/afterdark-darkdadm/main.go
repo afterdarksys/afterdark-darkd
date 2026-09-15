@@ -591,7 +591,7 @@ func discoverNodes(ctx context.Context, port int) []DiscoveredNode {
 			}
 
 			// Try to connect to darkd port
-			addr := fmt.Sprintf("%s:%d", checkIP.String(), port)
+			addr := net.JoinHostPort(checkIP.String(), fmt.Sprint(port))
 			conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
 			if err == nil {
 				conn.Close()
