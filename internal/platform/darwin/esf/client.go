@@ -1,77 +1,107 @@
-//go:build darwin && esf
+//go:build darwin && esf && cgo
 
 package esf
 
 /*
-#cgo CFLAGS: -x objective-c
-#cgo LDFLAGS: -framework EndpointSecurity -framework Foundation
-
-#include <stdlib.h>
+#cgo CFLAGS: -x objective-c -fblocks
+#cgo LDFLAGS: -lEndpointSecurity -framework Foundation -lbsm
 #include "client.h"
 */
 import "C"
 import (
-	"errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
 )
 
-// Client wraps the C EndpointSecurity client
+type EventType int
+type Event struct {
+	Type      EventType
+	PID       int
+	PPID      int
+	UID       uint32
+	Path      string
+	SigningID string
+	Sequence  uint64
+}
 type Client struct {
+	stop    chan struct{}
+	done    chan struct{}
 	running bool
+	once    sync.Once
 }
 
-// NewClient creates a new ESF client
+var callbacks struct {
+	sync.RWMutex
+	queue chan Event
+}
+var lifecycle sync.Mutex
+var dropped atomic.Uint64
+
+func DroppedEvents() uint64 { return dropped.Load() }
 func NewClient() (*Client, error) {
-	if res := C.init_es_client(); res != 0 {
-		return nil, errors.New("failed to initialize ES client (root/entitlements required)")
+	if !lifecycle.TryLock() {
+		return nil, fmt.Errorf("Endpoint Security client already exists")
+	}
+	if code := C.init_es_client(); code != 0 {
+		lifecycle.Unlock()
+		return nil, fmt.Errorf("Endpoint Security initialization failed: code %d (verify entitlement and Full Disk Access)", int(code))
 	}
 	return &Client{}, nil
 }
-
-// Subscribe subscribes to core events
 func (c *Client) Subscribe() error {
-	if res := C.subscribe_to_events(); res != 0 {
-		return fmt.Errorf("failed to subscribe to events")
+	if code := C.subscribe_to_events(); code != 0 {
+		return fmt.Errorf("Endpoint Security subscription failed: %d", int(code))
 	}
 	return nil
 }
 
 //export HandleESFEvent
-func HandleESFEvent(evtType C.int, pid C.int, path *C.char) {
-	goPath := C.GoString(path)
-	// Dispatch to Global Handler (simplest for CGO)
-	if GlobalHandler != nil {
-		GlobalHandler(Event{
-			Type: EventType(evtType),
-			PID:  int(pid),
-			Path: goPath,
-		})
+func HandleESFEvent(kind C.int, pid C.int, ppid C.int, uid C.uint, path *C.char, signing *C.char, sequence C.ulonglong) {
+	e := Event{Type: EventType(kind), PID: int(pid), PPID: int(ppid), UID: uint32(uid), Path: C.GoString(path), SigningID: C.GoString(signing), Sequence: uint64(sequence)}
+	callbacks.RLock()
+	defer callbacks.RUnlock()
+	if callbacks.queue == nil {
+		dropped.Add(1)
+		return
+	}
+	select {
+	case callbacks.queue <- e:
+	default:
+		dropped.Add(1)
 	}
 }
-
-// GlobalHandler is a singleton for CGO callbacks
-var GlobalHandler func(Event)
-
-type EventType int
-
-type Event struct {
-	Type EventType
-	PID  int
-	Path string
-}
-
-// Start begins processing events
 func (c *Client) Start(handler func(Event)) {
-	GlobalHandler = handler
-	C.start_handling_events()
+	q := make(chan Event, 1024)
+	c.stop = make(chan struct{})
+	c.done = make(chan struct{})
 	c.running = true
+	callbacks.Lock()
+	callbacks.queue = q
+	callbacks.Unlock()
+	go func() {
+		defer close(c.done)
+		for {
+			select {
+			case <-c.stop:
+				return
+			case e := <-q:
+				handler(e)
+			}
+		}
+	}()
 }
-
-// Stop stops the client
 func (c *Client) Stop() {
-	if c.running {
+	c.once.Do(func() {
 		C.stop_es_client()
-		c.running = false
-		GlobalHandler = nil
-	}
+		callbacks.Lock()
+		callbacks.queue = nil
+		callbacks.Unlock()
+		if c.running {
+			close(c.stop)
+			<-c.done
+			c.running = false
+		}
+		lifecycle.Unlock()
+	})
 }

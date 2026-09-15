@@ -3,6 +3,7 @@
 package memscan
 
 import (
+	"fmt"
 	"github.com/afterdarksys/afterdark-darkd/internal/models"
 	"go.uber.org/zap"
 )
@@ -30,7 +31,7 @@ func (r *DarwinReader) ListProcesses() ([]models.ScanProcessInfo, error) {
 
 	r.logger.Debug("darwin process enumeration not fully implemented")
 
-	return processes, nil
+	return processes, fmt.Errorf("macOS process memory enumeration is unavailable")
 }
 
 // GetProcessInfo returns details for a PID
@@ -51,7 +52,7 @@ func (r *DarwinReader) GetMemoryRegions(pid int) ([]models.MemoryRegion, error) 
 	r.logger.Debug("darwin memory region enumeration requires elevated privileges",
 		zap.Int("pid", pid))
 
-	return regions, nil
+	return regions, fmt.Errorf("macOS process memory regions are unavailable")
 }
 
 // ReadMemory reads memory from a process
@@ -62,7 +63,7 @@ func (r *DarwinReader) ReadMemory(pid int, address uint64, size uint64) ([]byte,
 		zap.Int("pid", pid),
 		zap.Uint64("address", address))
 
-	return nil, nil
+	return nil, fmt.Errorf("macOS process memory reading is unavailable")
 }
 
 // IsLSASS returns false on macOS (Windows-only concept)

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/afterdarksys/afterdark-darkd/internal/events"
 	"github.com/afterdarksys/afterdark-darkd/internal/platform/darwin/esf"
 	"github.com/afterdarksys/afterdark-darkd/internal/service"
 	"github.com/afterdarksys/afterdark-darkd/pkg/logging"
@@ -64,6 +65,7 @@ func (s *Service) Start(ctx context.Context) error {
 
 	if err := client.Subscribe(); err != nil {
 		s.logger.Error("failed to subscribe to ESF events", zap.Error(err))
+		client.Stop()
 		return nil
 	}
 
@@ -79,13 +81,9 @@ func (s *Service) Start(ctx context.Context) error {
 }
 
 func (s *Service) handleEvent(evt esf.Event) {
-	// Log the event for now
-	s.logger.Info("ESF Event",
-		zap.Int("type", int(evt.Type)),
-		zap.Int("pid", evt.PID),
-		zap.String("path", evt.Path))
-
-	// Future: Send to SIEM or Process Monitor
+	if err := events.Emit(s.registry, ServiceName, "macos.endpoint_security", "info", evt); err != nil {
+		s.logger.Warn("ES event rejected", zap.Error(err))
+	}
 }
 
 func (s *Service) Stop(ctx context.Context) error {
@@ -130,5 +128,6 @@ func (s *Service) Health() service.HealthStatus {
 		Status:    status,
 		Message:   msg,
 		LastCheck: time.Now(),
+		Metrics:   map[string]interface{}{"dropped_events": esf.DroppedEvents()},
 	}
 }

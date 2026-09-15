@@ -1,4 +1,4 @@
-//go:build darwin && !esf
+//go:build darwin && (!esf || !cgo)
 
 // Package esf provides a stub implementation when ESF framework is not available.
 // Build with -tags esf to enable full EndpointSecurity support.
@@ -33,7 +33,13 @@ type EventType int
 
 // Event for stub
 type Event struct {
-	Type EventType
-	PID  int
-	Path string
+	Type      EventType
+	PID       int
+	PPID      int
+	UID       uint32
+	SigningID string
+	Sequence  uint64
+	Path      string
 }
+
+func DroppedEvents() uint64 { return 0 }
