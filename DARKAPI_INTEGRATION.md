@@ -10,7 +10,7 @@ This implementation follows the handlers in the sibling `darkapi.io` checkout, e
 - `api/deps.py`: account API-key authentication.
 - `k8s/ingress.yaml`: the dedicated API hostname.
 
-These are source-based contract tests against local HTTP fixtures, not a claim that the production deployment has been exercised. No live account was enrolled or production telemetry submitted during development. The server repository was read without changing it.
+These are source-based contract tests against local HTTP fixtures, not a claim that the production deployment has been exercised. No live account was enrolled or production telemetry submitted during development. That initial implementation used the server repository as a read-only reference. A subsequent console enhancement adds single-use enrollment tokens and tenant-scoped telemetry views in the server repository.
 
 ## Connect and authenticate
 
@@ -37,7 +37,7 @@ The server issues expiring console credentials on password login; there is no im
 
 ## Enroll and interact
 
-An account key with `write` or `admin` permission is required for enrollment. The returned device key has a different scope and is kept separately from the account key.
+Enroll with a single-use token created in **Console → Darkd endpoints**, or with an account key carrying `write` or `admin` permission. Set `DARKAPI_ENROLLMENT_TOKEN` to the console token before running `darkapi device enroll`; the token is used only for enrollment and is not stored as an account key. Console tokens expire after 24 hours and can enroll one device. The returned device key has a different scope and is kept separately from the account key.
 
 ```sh
 dist/darkapi device enroll
@@ -58,7 +58,7 @@ Bulk reputation access depends on the account tier. The generic request command 
 | --- | --- | --- |
 | Login | POST `/v1/auth/login` | Email/password JSON |
 | Account | GET `/v1/account` | `X-API-Key`: account key |
-| Enrollment | POST `/v1/devices/enroll` | `enrollment_token`: write-enabled account key |
+| Enrollment | POST `/v1/devices/enroll` | `enrollment_token`: console token or write-enabled account key |
 | Heartbeat | POST `/v1/devices/heartbeat` | Device key plus `X-Device-ID` |
 | Device configuration | GET `/v1/devices/config` | Device key plus `X-Device-ID` |
 | Telemetry | POST `/api/v1/darkd/telemetry` | Device key; enrolled ID in `system_id` |

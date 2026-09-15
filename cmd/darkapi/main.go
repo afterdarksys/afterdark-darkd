@@ -101,7 +101,7 @@ func newRoot() *cobra.Command {
 	})})
 	root.AddCommand(&cobra.Command{Use: "account", Short: "Fetch authenticated account details", RunE: call(func(ctx context.Context, c *cloud.Client) (interface{}, error) { return c.Account(ctx) })})
 	device := &cobra.Command{Use: "device", Short: "Enroll and manage this device"}
-	device.AddCommand(&cobra.Command{Use: "enroll", Short: "Exchange a write-enabled account key for device credentials", RunE: func(cmd *cobra.Command, _ []string) error {
+	device.AddCommand(&cobra.Command{Use: "enroll", Short: "Exchange an enrollment token or write-enabled account key for device credentials", RunE: func(cmd *cobra.Command, _ []string) error {
 		client, saved, err := o.client()
 		if err != nil {
 			return err
@@ -115,7 +115,7 @@ func newRoot() *cobra.Command {
 		}
 		ctx, cancel := context.WithTimeout(cmd.Context(), o.timeout)
 		defer cancel()
-		result, err := client.Enroll(ctx, cloud.EnrollmentRequest{Hostname: hostname, Platform: runtime.GOOS, Architecture: runtime.GOARCH, AgentVersion: Version})
+		result, err := client.Enroll(ctx, cloud.EnrollmentRequest{EnrollmentToken: os.Getenv("DARKAPI_ENROLLMENT_TOKEN"), Hostname: hostname, Platform: runtime.GOOS, Architecture: runtime.GOARCH, AgentVersion: Version})
 		if err != nil {
 			return err
 		}
