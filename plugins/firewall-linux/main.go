@@ -38,15 +38,15 @@ const (
 type LinuxFirewall struct {
 	sdk.BaseFirewallPlugin
 
-	mu           sync.RWMutex
-	backend      string
-	backendVer   string
-	enabled      bool
-	rules        map[string]*sdk.FirewallRule
-	blockedIPs   map[string]*sdk.BlockedIP
+	mu             sync.RWMutex
+	backend        string
+	backendVer     string
+	enabled        bool
+	rules          map[string]*sdk.FirewallRule
+	blockedIPs     map[string]*sdk.BlockedIP
 	defaultDenyIn  bool
 	defaultDenyOut bool
-	logger       func(string, ...interface{})
+	logger         func(string, ...interface{})
 }
 
 func (f *LinuxFirewall) Info() sdk.PluginInfo {
@@ -118,6 +118,9 @@ func (f *LinuxFirewall) Enable(ctx context.Context, enable bool, defaultDenyInbo
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
+	if defaultDenyInbound || defaultDenyOutbound {
+		return nil, fmt.Errorf("default-deny requires a verified rollback policy; unsupported")
+	}
 	if enable {
 		if err := f.initFirewall(ctx); err != nil {
 			return nil, fmt.Errorf("failed to initialize firewall: %w", err)
@@ -173,7 +176,7 @@ func (f *LinuxFirewall) initNftables(ctx context.Context) error {
 		if err := f.runNft(ctx, cmd); err != nil {
 			// Ignore "already exists" errors
 			if !strings.Contains(err.Error(), "File exists") {
-				f.logger("nft command failed (continuing): %s - %v", cmd, err)
+				return fmt.Errorf("nft initialization %q: %w", cmd, err)
 			}
 		}
 	}
@@ -194,7 +197,7 @@ func (f *LinuxFirewall) initIptables(ctx context.Context) error {
 		if err := f.runIptables(ctx, args...); err != nil {
 			// Ignore chain exists errors
 			if !strings.Contains(err.Error(), "Chain already exists") {
-				f.logger("iptables command failed (continuing): %v - %v", args, err)
+				return fmt.Errorf("iptables initialization %v: %w", args, err)
 			}
 		}
 	}
@@ -218,7 +221,9 @@ func (f *LinuxFirewall) disableFirewall(ctx context.Context) error {
 	}
 
 	for _, args := range cmds {
-		f.runIptables(ctx, args...) // Ignore errors during cleanup
+		if err := f.runIptables(ctx, args...); err != nil {
+			return fmt.Errorf("iptables cleanup %v: %w", args, err)
+		}
 	}
 
 	return nil

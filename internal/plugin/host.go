@@ -35,6 +35,7 @@ var PluginMap = map[string]plugin.Plugin{
 	"storage":    &StoragePluginImpl{},
 	"reporter":   &ReporterPluginImpl{},
 	"cli":        &CLIPluginImpl{},
+	"firewall":   &FirewallPluginImpl{},
 }
 
 // LoadedPlugin represents a loaded and running plugin
@@ -127,6 +128,9 @@ func (h *Host) DiscoverPlugins() ([]string, error) {
 
 // LoadPlugin loads a single plugin from the given path
 func (h *Host) LoadPlugin(path string) (*LoadedPlugin, error) {
+	if err := validatePluginPath(path); err != nil {
+		return nil, err
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -192,7 +196,10 @@ func (h *Host) dispensePlugin(rpcClient plugin.ClientProtocol) (interface{}, err
 	for name := range PluginMap {
 		raw, err := rpcClient.Dispense(name)
 		if err == nil {
-			return raw, nil
+			info, infoErr := h.getPluginInfo(raw)
+			if infoErr == nil && info.Name != "" && string(info.Type) == name {
+				return raw, nil
+			}
 		}
 	}
 	return nil, fmt.Errorf("plugin does not implement any known interface")
@@ -210,6 +217,8 @@ func (h *Host) getPluginInfo(raw interface{}) (PluginInfo, error) {
 	case ReporterPlugin:
 		return p.Info(), nil
 	case CLIPlugin:
+		return p.Info(), nil
+	case FirewallPlugin:
 		return p.Info(), nil
 	default:
 		return PluginInfo{}, fmt.Errorf("unknown plugin type")
@@ -415,6 +424,8 @@ func (h *Host) checkPluginHealth(p *LoadedPlugin) PluginHealth {
 		return plugin.Health()
 	case CLIPlugin:
 		return plugin.Health()
+	case FirewallPlugin:
+		return plugin.Health()
 	default:
 		return PluginHealth{
 			State:     PluginStateError,
@@ -548,4 +559,53 @@ func jsonToMap(b []byte) map[string]interface{} {
 		return nil
 	}
 	return m
+}
+
+// GetFirewallPlugins returns connected firewall adapters without enabling them.
+func (h *Host) GetFirewallPlugins() []FirewallPlugin {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	var result []FirewallPlugin
+	for _, p := range h.plugins {
+		if f, ok := p.Raw.(FirewallPlugin); ok {
+			result = append(result, f)
+		}
+	}
+	return result
+}
+
+// Validate the executable and every ancestor before launching privileged code.
+// Ownership alone is insufficient if another user can replace its directory.
+func validatePluginPath(path string) error {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	for current := absolute; ; current = filepath.Dir(current) {
+		info, err := os.Lstat(current)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("plugin path contains a symlink: %s", current)
+		}
+		if current == absolute && !info.Mode().IsRegular() {
+			return fmt.Errorf("plugin must be a regular file")
+		}
+		if runtime.GOOS != "windows" {
+			if info.Mode().Perm()&0022 != 0 {
+				return fmt.Errorf("plugin path is writable by an untrusted user: %s", current)
+			}
+			if current == absolute && info.Mode().Perm()&0111 == 0 {
+				return fmt.Errorf("plugin is not executable")
+			}
+		}
+		if err := validatePluginOwner(current, info); err != nil {
+			return fmt.Errorf("%s: %w", current, err)
+		}
+		if filepath.Dir(current) == current {
+			break
+		}
+	}
+	return nil
 }
