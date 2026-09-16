@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "rules": [
+    {
+      "id": "server.wildcard-admin-listener",
+      "version": "1.0.0",
+      "kind": "network.observed",
+      "description": "Administrative TCP listener bound to all IPv4 interfaces; review intended exposure.",
+      "all": [
+        {
+          "field": "network.local_address",
+          "operator": "equals",
+          "value": "0.0.0.0"
+        },
+        {
+          "field": "network.state",
+          "operator": "equals",
+          "value": "LISTEN"
+        },
+        {
+          "field": "network.local_port",
+          "operator": "regex",
+          "value": "^(22|3389|5985|5986)$"
+        }
+      ]
+    },
+    {
+      "id": "server.metadata-access",
+      "version": "1.0.0",
+      "kind": "network.observed",
+      "description": "Connection to the link-local cloud metadata address; review process context.",
+      "all": [
+        {
+          "field": "network.remote_address",
+          "operator": "equals",
+          "value": "169.254.169.254"
+        }
+      ]
+    },
+    {
+      "id": "linux.user-writable-process",
+      "version": "1.0.0",
+      "kind": "process.observed",
+      "description": "Process executable observed in a temporary directory; verify provenance.",
+      "all": [
+        {
+          "field": "process.executable",
+          "operator": "regex",
+          "value": "^(/tmp/|/var/tmp/|/dev/shm/)"
+        }
+      ]
+    },
+    {
+      "id": "macos.downloaded-process",
+      "version": "1.0.0",
+      "kind": "process.observed",
+      "description": "Executable observed in a user Downloads directory; verify signing and origin.",
+      "all": [
+        {
+          "field": "process.executable",
+          "operator": "regex",
+          "value": "^/Users/[^/]+/Downloads/"
+        }
+      ]
+    },
+    {
+      "id": "windows.user-writable-process",
+      "version": "1.0.0",
+      "kind": "process.observed",
+      "description": "Windows process observed in a user Downloads or Temp directory; verify provenance.",
+      "all": [
+        {
+          "field": "process.executable",
+          "operator": "regex",
+          "value": "(?i)^[a-z]:\\\\Users\\\\[^\\\\]+\\\\(Downloads|AppData\\\\Local\\\\Temp)\\\\"
+        }
+      ]
+    },
+    {
+      "id": "windows.encoded-powershell",
+      "version": "1.0.0",
+      "kind": "process.observed",
+      "description": "PowerShell command line contains an encoded-command option; requires explicit command-line collection.",
+      "all": [
+        {
+          "field": "process.name",
+          "operator": "regex",
+          "value": "(?i)^(powershell|pwsh)(\\.exe)?$"
+        },
+        {
+          "field": "process.command_line",
+          "operator": "regex",
+          "value": "(?i)(^|\\s)-(enc|encodedcommand)\\s+\\S+"
+        }
+      ]
+    }
+  ]
+}
