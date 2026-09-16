@@ -14,12 +14,16 @@ import (
 )
 
 type Service struct {
-	config     *models.PersistenceConfig
-	running    bool
-	cancel     context.CancelFunc
-	mu         sync.RWMutex
-	logger     *zap.Logger
-	knownItems map[string]bool // Simplified tracking set
+	config        *models.PersistenceConfig
+	running       bool
+	cancel        context.CancelFunc
+	mu            sync.RWMutex
+	logger        *zap.Logger
+	OnObservation func(kind, path string)
+	lastScan      time.Time
+	readable      int
+	scanErrors    int
+	knownItems    map[string]bool // Simplified tracking set
 }
 
 func New(cfg *models.PersistenceConfig) *Service {
@@ -66,9 +70,21 @@ func (s *Service) Stop(ctx context.Context) error {
 }
 
 func (s *Service) Health() service.HealthStatus {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	status := service.HealthHealthy
+	message := "persistence inventory active"
+	if !s.running {
+		status = service.HealthDegraded
+		message = "persistence monitor stopped"
+	} else if s.readable == 0 || s.scanErrors > 0 {
+		status = service.HealthDegraded
+		message = "persistence inventory incomplete or unsupported"
+	}
 	return service.HealthStatus{
-		Status:    service.HealthHealthy,
-		Message:   "persistence monitor active",
+		Status:    status,
+		Message:   message,
+		Metrics:   map[string]interface{}{"last_scan": s.lastScan, "readable_directories": s.readable, "scan_errors": s.scanErrors},
 		LastCheck: time.Now(),
 	}
 }
@@ -93,9 +109,15 @@ func (s *Service) runLoop(ctx context.Context) {
 }
 
 func (s *Service) scanPersistence(ctx context.Context) {
+	s.mu.Lock()
+	s.readable = 0
+	s.scanErrors = 0
+	s.mu.Unlock()
 	s.scanLaunchAgents()
 	s.scanCron()
-	// Browser extensions scanning logic would go here
+	s.mu.Lock()
+	s.lastScan = time.Now()
+	s.mu.Unlock()
 }
 
 func (s *Service) scanLaunchAgents() {
@@ -114,6 +136,13 @@ func (s *Service) scanLaunchAgents() {
 
 	for _, dir := range dirs {
 		files, err := os.ReadDir(dir)
+		s.mu.Lock()
+		if err == nil {
+			s.readable++
+		} else if !os.IsNotExist(err) {
+			s.scanErrors++
+		}
+		s.mu.Unlock()
 		if err != nil {
 			continue
 		}
@@ -127,7 +156,9 @@ func (s *Service) scanLaunchAgents() {
 			if !s.knownItems[path] {
 				s.knownItems[path] = true
 				s.logger.Info("found persistence item", zap.String("type", "launch_agent"), zap.String("path", path))
-				// Alert logic would go here (new item found)
+				if s.OnObservation != nil {
+					s.OnObservation("launch_agent", path)
+				}
 			}
 			s.mu.Unlock()
 		}
@@ -136,9 +167,16 @@ func (s *Service) scanLaunchAgents() {
 
 func (s *Service) scanCron() {
 	// Scan /etc/crontab and /var/at/tabs (macos) or /var/spool/cron (linux)
-	cronDirs := []string{"/var/at/tabs", "/usr/lib/cron/tabs"}
+	cronDirs := []string{"/var/at/tabs", "/usr/lib/cron/tabs", "/etc/cron.d", "/var/spool/cron"}
 	for _, dir := range cronDirs {
 		files, err := os.ReadDir(dir)
+		s.mu.Lock()
+		if err == nil {
+			s.readable++
+		} else if !os.IsNotExist(err) {
+			s.scanErrors++
+		}
+		s.mu.Unlock()
 		if err != nil {
 			continue
 		}
@@ -148,6 +186,9 @@ func (s *Service) scanCron() {
 			if !s.knownItems[path] {
 				s.knownItems[path] = true
 				s.logger.Info("found persistence item", zap.String("type", "cron_job"), zap.String("user", f.Name()))
+				if s.OnObservation != nil {
+					s.OnObservation("cron_job", path)
+				}
 			}
 			s.mu.Unlock()
 		}

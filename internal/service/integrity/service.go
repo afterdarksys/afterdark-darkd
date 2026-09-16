@@ -16,12 +16,15 @@ import (
 )
 
 type Service struct {
-	config  *models.IntegrityConfig
-	running bool
-	cancel  context.CancelFunc
-	mu      sync.RWMutex
-	logger  *zap.Logger
-	hashes  map[string]string
+	config     *models.IntegrityConfig
+	running    bool
+	cancel     context.CancelFunc
+	mu         sync.RWMutex
+	logger     *zap.Logger
+	hashes     map[string]string
+	OnChange   func(path, oldHash, newHash string)
+	lastScan   time.Time
+	scanErrors int
 }
 
 func New(cfg *models.IntegrityConfig) *Service {
@@ -85,12 +88,21 @@ func (s *Service) Stop(ctx context.Context) error {
 func (s *Service) Health() service.HealthStatus {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	status := service.HealthHealthy
+	message := "integrity monitor active"
+	if !s.running {
+		status = service.HealthDegraded
+		message = "integrity monitor stopped"
+	} else if s.lastScan.IsZero() || s.scanErrors > 0 {
+		status = service.HealthDegraded
+		message = "integrity scan incomplete"
+	}
 	return service.HealthStatus{
-		Status:    service.HealthHealthy,
-		Message:   "integrity monitor active",
+		Status:    status,
+		Message:   message,
 		LastCheck: time.Now(),
 		Metrics: map[string]interface{}{
-			"watched_files": len(s.config.WatchedFiles),
+			"watched_files": len(s.config.WatchedFiles), "scan_errors": s.scanErrors, "last_scan": s.lastScan,
 		},
 	}
 }
@@ -114,14 +126,23 @@ func (s *Service) runLoop(ctx context.Context) {
 }
 
 func (s *Service) scanFiles() {
+	s.mu.Lock()
+	s.scanErrors = 0
+	s.mu.Unlock()
 	for _, path := range s.config.WatchedFiles {
 		s.checkFile(path)
 	}
+	s.mu.Lock()
+	s.lastScan = time.Now()
+	s.mu.Unlock()
 }
 
 func (s *Service) checkFile(path string) {
 	hash, err := hashFile(path)
 	if err != nil {
+		s.mu.Lock()
+		s.scanErrors++
+		s.mu.Unlock()
 		if !os.IsNotExist(err) {
 			s.logger.Warn("failed to hash file", zap.String("path", path), zap.Error(err))
 		}
@@ -137,7 +158,9 @@ func (s *Service) checkFile(path string) {
 			zap.String("path", path),
 			zap.String("old_hash", oldHash),
 			zap.String("new_hash", hash))
-		// Here we would properly dispatch an alert event
+		if s.OnChange != nil {
+			s.OnChange(path, oldHash, hash)
+		}
 	} else if !exists {
 		s.logger.Debug("started tracking file", zap.String("path", path))
 	}

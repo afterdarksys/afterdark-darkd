@@ -212,6 +212,11 @@ func (d *Daemon) InitializeServices() error {
 	// 10. Integrity Monitor
 	if cfg.Services.IntegrityMonitor.Enabled {
 		intSvc := integrity.New(&cfg.Services.IntegrityMonitor)
+		intSvc.OnChange = func(path, oldHash, newHash string) {
+			if err := events.Emit(d.registry, "integrity_monitor", "file.integrity_changed", "warning", map[string]interface{}{"entities": map[string]interface{}{"file": map[string]string{"path": path, "sha256": newHash}}, "facts": map[string]interface{}{"files_modified": 1}, "old_sha256": oldHash}); err != nil {
+				d.logger.Warn("event rejected", zap.Error(err))
+			}
+		}
 		if err := d.registry.Register(intSvc); err != nil {
 			d.logger.Error("failed to register integrity monitor", zap.Error(err))
 		}
@@ -220,6 +225,11 @@ func (d *Daemon) InitializeServices() error {
 	// 11. Persistence Monitor
 	if cfg.Services.PersistenceMonitor.Enabled {
 		persSvc := persistence.New(&cfg.Services.PersistenceMonitor)
+		persSvc.OnObservation = func(kind, path string) {
+			if err := events.Emit(d.registry, "persistence_monitor", "persistence.observed", "info", map[string]interface{}{"kind": kind, "path": path, "scope": "inventory observation; does not prove newly created persistence"}); err != nil {
+				d.logger.Warn("event rejected", zap.Error(err))
+			}
+		}
 		if err := d.registry.Register(persSvc); err != nil {
 			d.logger.Error("failed to register persistence monitor", zap.Error(err))
 		}
@@ -272,6 +282,11 @@ func (d *Daemon) InitializeServices() error {
 		if err != nil {
 			d.logger.Error("failed to create canary service", zap.Error(err))
 		} else {
+			canarySvc.OnChange = func(path, operation string) {
+				if err := events.Emit(d.registry, "canary", "ransomware.canary", "warning", map[string]interface{}{"entities": map[string]interface{}{"file": map[string]string{"path": path}}, "facts": map[string]interface{}{"canary_triggered": true}, "operation": operation}); err != nil {
+					d.logger.Warn("event rejected", zap.Error(err))
+				}
+			}
 			if err := d.registry.Register(canarySvc); err != nil {
 				d.logger.Error("failed to register canary service", zap.Error(err))
 			}

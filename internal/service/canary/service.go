@@ -26,6 +26,7 @@ type Service struct {
 	logger   *zap.Logger
 	registry service.RegistryInterface
 	watcher  *fsnotify.Watcher
+	OnChange func(path, operation string)
 
 	mu      sync.RWMutex
 	running bool
@@ -107,9 +108,22 @@ func (s *Service) Configure(config interface{}) error {
 }
 
 func (s *Service) Health() service.HealthStatus {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	status := service.HealthHealthy
+	message := "canaries watched"
+	count := 0
+	if s.watcher != nil {
+		count = len(s.watcher.WatchList())
+	}
+	if !s.running || count == 0 {
+		status = service.HealthDegraded
+		message = "no active canary watches"
+	}
 	return service.HealthStatus{
-		Status:    service.HealthHealthy,
-		Message:   "canaries deployed",
+		Status:    status,
+		Message:   message,
+		Metrics:   map[string]interface{}{"watches": count},
 		LastCheck: time.Now(),
 	}
 }
@@ -154,7 +168,9 @@ func (s *Service) watchLoop() {
 			}
 			if event.Op&fsnotify.Write == fsnotify.Write || event.Op&fsnotify.Remove == fsnotify.Remove {
 				s.logger.Warn("RANSOMWARE ALERT: Canary file modified!", zap.String("file", event.Name), zap.String("op", event.Op.String()))
-				// Trigger alert mechanism here
+				if s.OnChange != nil {
+					s.OnChange(event.Name, event.Op.String())
+				}
 			}
 		case err, ok := <-s.watcher.Errors:
 			if !ok {
