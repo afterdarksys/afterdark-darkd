@@ -81,3 +81,40 @@ func TestProvenanceSurvivesRestartAndFailedWrites(t *testing.T) {
 		t.Fatalf("bad provenance: %+v %+v", a, b)
 	}
 }
+
+func TestCommandReceiptAndCanaryAreAtomicAcrossRestart(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "commands.db")
+	s := New(path, "host")
+	if err := s.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	receipt := CommandReceipt{ID: "command", Action: "delivery_canary", Status: "succeeded", Result: json.RawMessage(`{"event_id":"command"}`)}
+	oversized, _ := json.Marshal(map[string]string{"value": strings.Repeat("x", MaxPayload)})
+	if err := s.CompleteCommand(ctx, receipt, &Event{Source: "response", Type: "delivery.canary", Data: oversized}); err == nil {
+		t.Fatal("expected rejection")
+	}
+	if result, err := s.CommandReceipt(ctx, "command"); err != nil || result != nil {
+		t.Fatal("receipt survived rejected event", result, err)
+	}
+	if err := s.CompleteCommand(ctx, receipt, &Event{Source: "response", Type: "delivery.canary"}); err != nil {
+		t.Fatal(err)
+	}
+	s.Stop(ctx)
+	s = New(path, "host")
+	if err := s.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop(ctx)
+	if err := s.CompleteCommand(ctx, receipt, &Event{Source: "response", Type: "delivery.canary"}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.List(ctx, 10, true, time.Time{}, "", "")
+	if err != nil || len(rows) != 1 || rows[0].ID != "command" {
+		t.Fatal(rows, err)
+	}
+	saved, err := s.CommandReceipt(ctx, "command")
+	if err != nil || saved.Action != receipt.Action {
+		t.Fatal(saved, err)
+	}
+}

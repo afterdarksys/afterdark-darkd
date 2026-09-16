@@ -59,6 +59,10 @@ func TestDarkAPIAcknowledgementAndRestartReplay(t *testing.T) {
 			w.Write([]byte(`{"success":true}`))
 			return
 		}
+		if r.URL.Path == "/api/v1/endpoints/darkd/commands/claim" {
+			w.Write([]byte(`{"command":null}`))
+			return
+		}
 		if r.URL.Path != "/api/v1/darkd/telemetry" {
 			t.Errorf("unexpected path %s", r.URL.Path)
 			w.WriteHeader(404)
@@ -70,7 +74,7 @@ func TestDarkAPIAcknowledgementAndRestartReplay(t *testing.T) {
 		}
 		var event events.Event
 		json.Unmarshal(report.Event, &event)
-		if report.EventID != id || report.SystemID != "dev_123" || event.ID != id {
+		if report.SystemID != "dev_123" || event.ID != report.EventID || (event.Type == "test" && event.ID != id) {
 			t.Error("event envelope lost identity")
 		}
 		if !accept.Load() {
@@ -78,7 +82,7 @@ func TestDarkAPIAcknowledgementAndRestartReplay(t *testing.T) {
 			return
 		}
 		w.WriteHeader(202)
-		w.Write([]byte(`{"success":true,"status":"accepted","event_id":"` + id + `"}`))
+		w.Write([]byte(`{"success":true,"status":"accepted","event_id":"` + report.EventID + `"}`))
 	}))
 	defer server.Close()
 	dir := t.TempDir()
@@ -110,7 +114,7 @@ func TestDarkAPIAcknowledgementAndRestartReplay(t *testing.T) {
 	registry = service.NewRegistry()
 	registry.Register(store)
 	forwarder, _ = New(&Config{DarkAPI: client, BatchSize: 10}, registry)
-	pending, err := store.List(ctx, 10, true, time.Time{}, "", "")
+	pending, err := store.List(ctx, 10, true, time.Time{}, "test", "")
 	if err != nil || len(pending) != 1 {
 		t.Fatal("pending event not replayed", err)
 	}

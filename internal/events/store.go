@@ -77,7 +77,7 @@ func (s *Store) Start(ctx context.Context) error {
 		return err
 	}
 	db.SetMaxOpenConns(1)
-	for _, q := range []string{"PRAGMA busy_timeout=5000", "PRAGMA journal_mode=WAL", "PRAGMA synchronous=FULL", `CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,time INTEGER NOT NULL,kind TEXT NOT NULL,severity TEXT NOT NULL,payload BLOB NOT NULL,delivered INTEGER NOT NULL DEFAULT 0)`, `CREATE INDEX IF NOT EXISTS events_pending ON events(delivered,seq)`, `CREATE TABLE IF NOT EXISTS event_metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL)`, "PRAGMA user_version=1"} {
+	for _, q := range []string{"PRAGMA busy_timeout=5000", "PRAGMA journal_mode=WAL", "PRAGMA synchronous=FULL", `CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,time INTEGER NOT NULL,kind TEXT NOT NULL,severity TEXT NOT NULL,payload BLOB NOT NULL,delivered INTEGER NOT NULL DEFAULT 0)`, `CREATE INDEX IF NOT EXISTS events_pending ON events(delivered,seq)`, `CREATE TABLE IF NOT EXISTS event_metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL)`, `CREATE TABLE IF NOT EXISTS command_results(id TEXT PRIMARY KEY,action TEXT NOT NULL,result BLOB NOT NULL,status TEXT NOT NULL)`, "PRAGMA user_version=1"} {
 		if _, err = db.ExecContext(ctx, q); err != nil {
 			db.Close()
 			return err
@@ -118,6 +118,9 @@ func (s *Store) Health() service.HealthStatus {
 func (s *Store) Publish(ctx context.Context, e Event) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.publishLocked(ctx, e, nil)
+}
+func (s *Store) publishLocked(ctx context.Context, e Event, receipt *CommandReceipt) error {
 	fail := func(err error) error { s.dropped.Add(1); return err }
 	if s.db == nil {
 		return fail(fmt.Errorf("event store unavailable"))
@@ -130,6 +133,10 @@ func (s *Store) Publish(ctx context.Context, e Event) error {
 		return fail(err)
 	}
 	if exists > 0 {
+		if receipt != nil {
+			_, err := s.db.ExecContext(ctx, "INSERT OR IGNORE INTO command_results(id,action,result,status) VALUES(?,?,?,?)", receipt.ID, receipt.Action, receipt.Result, receipt.Status)
+			return err
+		}
 		return nil
 	}
 	e.Version = 1 // Preserve the existing event-store version field; schema_version governs the new envelope.
@@ -186,6 +193,11 @@ func (s *Store) Publish(ctx context.Context, e Event) error {
 	}
 	if _, err = tx.ExecContext(ctx, "INSERT OR IGNORE INTO events(id,time,kind,severity,payload) VALUES(?,?,?,?,?)", e.ID, e.Time.UnixNano(), e.Type, e.Severity, payload); err != nil {
 		return fail(err)
+	}
+	if receipt != nil {
+		if _, err = tx.ExecContext(ctx, "INSERT INTO command_results(id,action,result,status) VALUES(?,?,?,?)", receipt.ID, receipt.Action, receipt.Result, receipt.Status); err != nil {
+			return fail(err)
+		}
 	}
 	return tx.Commit()
 }
@@ -267,5 +279,14 @@ func Emit(reg service.RegistryInterface, source, kind, severity string, data int
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	return s.Publish(ctx, Event{Source: source, Type: kind, Severity: severity, Data: payload})
+	event := Event{Source: source, Type: kind, Severity: severity, Data: payload}
+	if typed, ok := data.(map[string]interface{}); ok {
+		if entities, ok := typed["entities"].(map[string]interface{}); ok {
+			event.Entities = entities
+		}
+		if facts, ok := typed["facts"].(map[string]interface{}); ok {
+			event.Facts = facts
+		}
+	}
+	return s.Publish(ctx, event)
 }

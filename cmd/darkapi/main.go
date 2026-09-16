@@ -126,6 +126,18 @@ func newRoot() *cobra.Command {
 		}
 		return output(cmd, map[string]string{"device_id": result.DeviceID, "credentials": o.credentials})
 	}})
+	device.AddCommand(&cobra.Command{Use: "rotate", Short: "Rotate the device credential safely; restart darkd afterward", RunE: func(cmd *cobra.Command, _ []string) error {
+		client, _, err := o.client()
+		if err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(cmd.Context(), o.timeout)
+		defer cancel()
+		if err = client.RotateCredentials(ctx, o.credentials); err != nil {
+			return err
+		}
+		return output(cmd, map[string]string{"status": "rotated", "next_step": "Restart darkd to load the new credential"})
+	}})
 	device.AddCommand(&cobra.Command{Use: "heartbeat", Short: "Send an authenticated device heartbeat", RunE: call(func(ctx context.Context, c *cloud.Client) (interface{}, error) {
 		err := c.Heartbeat(ctx)
 		return map[string]bool{"accepted": err == nil}, err

@@ -9,10 +9,11 @@ import (
 
 // Account and device keys have different scopes and are never interchangeable.
 type Credentials struct {
-	BaseURL   string `json:"base_url"`
-	APIKey    string `json:"api_key,omitempty"`
-	DeviceID  string `json:"device_id,omitempty"`
-	DeviceKey string `json:"device_key,omitempty"`
+	RotationID string `json:"rotation_id,omitempty"`
+	BaseURL    string `json:"base_url"`
+	APIKey     string `json:"api_key,omitempty"`
+	DeviceID   string `json:"device_id,omitempty"`
+	DeviceKey  string `json:"device_key,omitempty"`
 }
 
 func DefaultCredentialPath() string {
@@ -80,5 +81,5 @@ func SaveCredentials(path string, c *Credentials) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), path)
+	return replaceCredential(f.Name(), path)
 }
