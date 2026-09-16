@@ -115,7 +115,7 @@ func New(cfg *models.Config) (*Daemon, error) {
 		logger:     logger,
 		pluginHost: pluginHost,
 		ipcServer:  ipcServer,
-		webServer:  web.New(registry, logger),
+		webServer:  web.New(registry, logger, cfg.IPC.AuthTokenFile),
 		shutdownCh: make(chan struct{}),
 		doneCh:     make(chan struct{}),
 		pidFile:    cfg.Daemon.PIDFile,

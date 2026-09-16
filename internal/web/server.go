@@ -2,9 +2,13 @@ package web
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"io/fs"
+	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -27,15 +31,21 @@ type Server struct {
 	registry   *service.Registry
 	httpServer *http.Server
 	logger     *zap.Logger
+	tokenFile  string
+	started    time.Time
 }
 
 // New creates a new web server backed by the given service registry.
-func New(registry *service.Registry, logger *zap.Logger) *Server {
+func New(registry *service.Registry, logger *zap.Logger, tokenFile ...string) *Server {
 	s := &Server{
 		registry: registry,
 		logger:   logger.With(zap.String("component", "web")),
 	}
 
+	if len(tokenFile) > 0 {
+		s.tokenFile = tokenFile[0]
+	}
+	s.started = time.Now()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/patches", s.handlePatches)
@@ -50,7 +60,7 @@ func New(registry *service.Registry, logger *zap.Logger) *Server {
 
 	s.httpServer = &http.Server{
 		Addr:         addr,
-		Handler:      mux,
+		Handler:      s.authenticate(mux),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,
@@ -63,14 +73,61 @@ func New(registry *service.Registry, logger *zap.Logger) *Server {
 func (s *Server) Addr() string { return "http://" + addr }
 
 // Start starts the web server in the background.
-func (s *Server) Start(_ context.Context) error {
+func (s *Server) Start(ctx context.Context) error {
+	if _, err := s.token(); err != nil {
+		return fmt.Errorf("web API authentication unavailable: %w", err)
+	}
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
 	s.logger.Info("starting admin web UI", zap.String("addr", s.Addr()))
 	go func() {
-		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := s.httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
 			s.logger.Error("web server error", zap.Error(err))
 		}
 	}()
 	return nil
+}
+
+func (s *Server) token() (string, error) {
+	data, err := os.ReadFile(s.tokenFile)
+	if err != nil {
+		return "", err
+	}
+	token := strings.TrimSpace(string(data))
+	if len(token) < 32 {
+		return "", fmt.Errorf("authentication token is missing or too short")
+	}
+	return token, nil
+}
+
+func (s *Server) authenticate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Cache-Control", "no-store")
+		// Loopback binding alone does not prevent DNS rebinding.
+		host, _, err := net.SplitHostPort(r.Host)
+		if err != nil {
+			host = r.Host
+		}
+		if host != "127.0.0.1" && host != "localhost" && host != "::1" {
+			http.Error(w, "invalid host", http.StatusForbidden)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			expected, err := s.token()
+			supplied := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+			if err != nil || !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") || subtle.ConstantTimeCompare([]byte(expected), []byte(supplied)) != 1 {
+				w.Header().Set("WWW-Authenticate", `Bearer realm="afterdark"`)
+				http.Error(w, "authentication required", http.StatusUnauthorized)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // Stop shuts down the web server gracefully.
@@ -108,7 +165,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	resp := statusResp{
 		Daemon:  "running",
 		Version: "0.1.0",
-		Since:   time.Now(),
+		Since:   s.started,
+		Uptime:  time.Since(s.started).Round(time.Second).String(),
 	}
 	if id != nil {
 		resp.Registered = id.Registered
@@ -129,6 +187,7 @@ func (s *Server) handlePatches(w http.ResponseWriter, r *http.Request) {
 
 	svc := s.registry.Get(patchsvc.ServiceName)
 	if svc == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
 		writeJSON(w, map[string]any{"error": "patch service unavailable"})
 		return
 	}
@@ -150,6 +209,7 @@ func (s *Server) handleThreats(w http.ResponseWriter, r *http.Request) {
 
 	svc := s.registry.Get(threatsvc.ServiceName)
 	if svc == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
 		writeJSON(w, map[string]any{"error": "threat service unavailable"})
 		return
 	}

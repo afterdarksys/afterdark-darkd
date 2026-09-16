@@ -522,11 +522,22 @@ type ScriptingConfig struct {
 }
 
 // SIEMConfig holds SIEM forwarder configuration
+type SIEMRoute struct {
+	Name       string   `yaml:"name" json:"name"`
+	Format     string   `yaml:"format" json:"format"`
+	URL        string   `yaml:"url" json:"url"`
+	AuthToken  string   `yaml:"auth_token" json:"auth_token"`
+	Index      string   `yaml:"index" json:"index"`
+	Severities []string `yaml:"severities" json:"severities"`
+	Types      []string `yaml:"types" json:"types"`
+}
+
 type SIEMConfig struct {
-	Enabled   bool   `yaml:"enabled" json:"enabled"`
-	URL       string `yaml:"url" json:"url"`
-	AuthToken string `yaml:"auth_token" json:"auth_token"`
-	BatchSize int    `yaml:"batch_size" json:"batch_size"`
+	Routes    []SIEMRoute `yaml:"routes" json:"routes"`
+	Enabled   bool        `yaml:"enabled" json:"enabled"`
+	URL       string      `yaml:"url" json:"url"`
+	AuthToken string      `yaml:"auth_token" json:"auth_token"`
+	BatchSize int         `yaml:"batch_size" json:"batch_size"`
 }
 
 // EBPFConfig holds eBPF service configuration

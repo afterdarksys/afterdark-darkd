@@ -423,6 +423,7 @@ func (d *Daemon) InitializeServices() error {
 			URL:            cfg.Services.SIEM.URL,
 			AuthToken:      cfg.Services.SIEM.AuthToken,
 			BatchSize:      cfg.Services.SIEM.BatchSize,
+			Routes:         cfg.Services.SIEM.Routes,
 		}
 
 		if cfg.API.DarkAPI.TelemetryEnabled {

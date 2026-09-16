@@ -1,7 +1,6 @@
 package siem
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,7 +9,6 @@ import (
 	"github.com/afterdarksys/afterdark-darkd/internal/events"
 	"github.com/afterdarksys/afterdark-darkd/internal/service"
 	"net/http"
-	"net/url"
 	"sync"
 	"time"
 )
@@ -18,6 +16,7 @@ import (
 const ServiceName = "siem_forwarder"
 
 type Config struct {
+	Routes         []Route `mapstructure:"routes"`
 	DeploymentMode string
 	DarkAPI        *darkapi.Client
 	Enabled        bool   `mapstructure:"enabled"`
@@ -54,9 +53,8 @@ func (s *Service) Start(ctx context.Context) error {
 	if s.cancel != nil {
 		return nil
 	}
-	u, err := url.Parse(s.config.URL)
-	if s.config.DarkAPI == nil && (err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https")) {
-		return fmt.Errorf("invalid SIEM URL")
+	if err := s.validateRoutes(); err != nil {
+		return err
 	}
 	if s.config.DarkAPI != nil && !s.config.DarkAPI.HasDeviceCredentials() {
 		return fmt.Errorf("DarkAPI telemetry requires enrolled device credentials")
@@ -161,6 +159,19 @@ func (s *Service) forward(ctx context.Context) error {
 	if err != nil || len(batch) == 0 {
 		return err
 	}
+	for _, route := range s.routes() {
+		selected := make([]events.Event, 0, len(batch))
+		for _, event := range batch {
+			if matches(route, event) {
+				selected = append(selected, event)
+			}
+		}
+		if len(selected) > 0 {
+			if err := s.deliver(ctx, route, selected); err != nil {
+				return err
+			}
+		}
+	}
 	if cloud := s.config.DarkAPI; cloud != nil {
 		for _, event := range batch {
 			data, err := json.Marshal(event)
@@ -170,31 +181,7 @@ func (s *Service) forward(ctx context.Context) error {
 			if err := cloud.ReportTelemetry(ctx, &darkapi.TelemetryReport{EventID: event.ID, Event: data}); err != nil {
 				return err
 			}
-			if err := store.Ack(ctx, []string{event.ID}); err != nil {
-				return err
-			}
 		}
-		return nil
-	}
-	data, err := json.Marshal(batch)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, "POST", s.config.URL, bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if s.config.AuthToken != "" {
-		req.Header.Set("Authorization", "Bearer "+s.config.AuthToken)
-	}
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return err
-	}
-	resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("SIEM rejected batch: HTTP %d", resp.StatusCode)
 	}
 	ids := make([]string, len(batch))
 	for i, e := range batch {

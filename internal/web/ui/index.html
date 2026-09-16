@@ -73,6 +73,7 @@
 </style>
 </head>
 <body>
+<div style="padding:12px">Daemon access token: <input id="api-token" type="password" autocomplete="off" aria-label="Daemon access token"><button onclick="unlock()">Unlock dashboard</button><small> Read the protected IPC token file as an authorized administrator. The token stays in this page's memory.</small></div>
 
 <nav>
   <div class="brand">After<span>Dark</span> &mdash; darkd</div>
@@ -139,6 +140,8 @@
 <script>
 const pages = ['status','patches','threats','health','account'];
 let currentPage = 'status';
+let apiToken = '';
+function unlock() { apiToken = document.getElementById('api-token').value; document.getElementById('api-token').value = ''; load(currentPage); }
 
 function show(page) {
   pages.forEach(p => {
@@ -150,13 +153,15 @@ function show(page) {
 }
 
 async function api(path) {
-  const r = await fetch('/api/' + path);
+  const r = await fetch('/api/' + path, {headers: {'Authorization': 'Bearer ' + apiToken}});
   if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
   return r.json();
 }
 
+function escapeHTML(value) { return String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;", "'":"&#39;"}[c])); }
+
 function badge(text, cls) {
-  return `<span class="badge ${cls}">${text}</span>`;
+  return `<span class="badge ${escapeHTML(cls)}">${escapeHTML(text)}</span>`;
 }
 
 function fmtTime(t) {
@@ -173,19 +178,19 @@ async function loadStatus() {
   try {
     const d = await api('status');
     cards.innerHTML = `
-      <div class="card ok"><div class="label">Daemon</div><div class="value">${d.daemon}</div><div class="sub">v${d.version}</div></div>
-      <div class="card ${d.registered ? 'ok' : 'warn'}"><div class="label">Registration</div><div class="value">${d.registered ? 'Registered' : 'Unregistered'}</div><div class="sub">${d.registered ? 'Account linked' : 'Run darkdadm login'}</div></div>
-      <div class="card info"><div class="label">OS</div><div class="value" style="font-size:18px">${d.os || '—'}</div><div class="sub">${d.arch || ''}</div></div>
+      <div class="card ok"><div class="label">Daemon</div><div class="value">${escapeHTML(d.daemon)}</div><div class="sub">v${escapeHTML(d.version)}</div></div>
+      <div class="card ${escapeHTML(d.registered ? 'ok' : 'warn')}"><div class="label">Registration</div><div class="value">${escapeHTML(d.registered ? 'Registered' : 'Unregistered')}</div><div class="sub">${escapeHTML(d.registered ? 'Account linked' : 'Run darkdadm login')}</div></div>
+      <div class="card info"><div class="label">OS</div><div class="value" style="font-size:18px">${escapeHTML(d.os || '—')}</div><div class="sub">${escapeHTML(d.arch || '')}</div></div>
     `;
     kv.innerHTML = `
-      <dt>Hostname</dt><dd>${d.hostname || '—'}</dd>
-      <dt>System ID</dt><dd>${d.system_id || '—'}</dd>
-      <dt>OS / Arch</dt><dd>${d.os || '—'} / ${d.arch || '—'}</dd>
-      <dt>Version</dt><dd>${d.version}</dd>
-      <dt>Since</dt><dd>${fmtTime(d.since)}</dd>
+      <dt>Hostname</dt><dd>${escapeHTML(d.hostname || '—')}</dd>
+      <dt>System ID</dt><dd>${escapeHTML(d.system_id || '—')}</dd>
+      <dt>OS / Arch</dt><dd>${escapeHTML(d.os || '—')} / ${escapeHTML(d.arch || '—')}</dd>
+      <dt>Version</dt><dd>${escapeHTML(d.version)}</dd>
+      <dt>Since</dt><dd>${escapeHTML(fmtTime(d.since))}</dd>
     `;
   } catch(e) {
-    cards.innerHTML = `<div class="error-msg">Error: ${e.message}</div>`;
+    cards.innerHTML = `<div class="error-msg">Error: ${escapeHTML(e.message)}</div>`;
     kv.innerHTML = '';
   }
 }
@@ -196,13 +201,13 @@ async function loadPatches() {
   const tbody = document.getElementById('urgent-tbody');
   try {
     const d = await api('patches');
-    if (d.error) { cards.innerHTML = `<div class="error-msg">${d.error}</div>`; return; }
+    if (d.error) { cards.innerHTML = `<div class="error-msg">${escapeHTML(d.error)}</div>`; return; }
     const cls = d.compliant ? 'ok' : (d.critical_missing > 0 ? 'crit' : 'warn');
     cards.innerHTML = `
-      <div class="card ${cls}"><div class="label">Compliance</div><div class="value">${d.compliant ? 'Compliant' : 'Non-Compliant'}</div><div class="sub">Last scan: ${fmtTime(d.last_scan)}</div></div>
-      <div class="card ${d.critical_missing > 0 ? 'crit' : 'ok'}"><div class="label">Critical Missing</div><div class="value">${d.critical_missing}</div></div>
-      <div class="card ${d.important_missing > 0 ? 'warn' : 'ok'}"><div class="label">Important Missing</div><div class="value">${d.important_missing}</div></div>
-      <div class="card info"><div class="label">Total Missing</div><div class="value">${d.total_missing}</div></div>
+      <div class="card ${escapeHTML(cls)}"><div class="label">Compliance</div><div class="value">${escapeHTML(d.compliant ? 'Compliant' : 'Non-Compliant')}</div><div class="sub">Last scan: ${escapeHTML(fmtTime(d.last_scan))}</div></div>
+      <div class="card ${escapeHTML(d.critical_missing > 0 ? 'crit' : 'ok')}"><div class="label">Critical Missing</div><div class="value">${escapeHTML(d.critical_missing)}</div></div>
+      <div class="card ${escapeHTML(d.important_missing > 0 ? 'warn' : 'ok')}"><div class="label">Important Missing</div><div class="value">${escapeHTML(d.important_missing)}</div></div>
+      <div class="card info"><div class="label">Total Missing</div><div class="value">${escapeHTML(d.total_missing)}</div></div>
     `;
     const actions = d.urgent_actions || [];
     if (actions.length === 0) {
@@ -213,15 +218,15 @@ async function loadPatches() {
       const sev = (a.patch.severity || '').toLowerCase();
       const sevCls = sev.includes('critical') ? 'red' : sev.includes('important') ? 'yellow' : 'blue';
       return `<tr>
-        <td>${a.patch.title || a.patch.id || '—'}</td>
+        <td>${escapeHTML(a.patch.title || a.patch.id || '—')}</td>
         <td>${badge(a.patch.severity || '—', sevCls)}</td>
-        <td>${fmtTime(a.due_by)}</td>
-        <td>${a.urgency_days}</td>
-        <td>${a.reason}</td>
+        <td>${escapeHTML(fmtTime(a.due_by))}</td>
+        <td>${escapeHTML(a.urgency_days)}</td>
+        <td>${escapeHTML(a.reason)}</td>
       </tr>`;
     }).join('');
   } catch(e) {
-    cards.innerHTML = `<div class="error-msg">Error: ${e.message}</div>`;
+    cards.innerHTML = `<div class="error-msg">Error: ${escapeHTML(e.message)}</div>`;
     tbody.innerHTML = '';
   }
 }
@@ -231,14 +236,14 @@ async function loadThreats() {
   const cards = document.getElementById('threat-cards');
   try {
     const d = await api('threats');
-    if (d.error) { cards.innerHTML = `<div class="error-msg">${d.error}</div>`; return; }
+    if (d.error) { cards.innerHTML = `<div class="error-msg">${escapeHTML(d.error)}</div>`; return; }
     cards.innerHTML = `
-      <div class="card info"><div class="label">Bad Domains</div><div class="value">${d.domain_count}</div></div>
-      <div class="card info"><div class="label">Bad IPs</div><div class="value">${d.ip_count}</div></div>
-      <div class="card ok"><div class="label">Last Sync</div><div class="value" style="font-size:16px">${fmtTime(d.last_sync)}</div></div>
+      <div class="card info"><div class="label">Bad Domains</div><div class="value">${escapeHTML(d.domain_count)}</div></div>
+      <div class="card info"><div class="label">Bad IPs</div><div class="value">${escapeHTML(d.ip_count)}</div></div>
+      <div class="card ok"><div class="label">Last Sync</div><div class="value" style="font-size:16px">${escapeHTML(fmtTime(d.last_sync))}</div></div>
     `;
   } catch(e) {
-    cards.innerHTML = `<div class="error-msg">Error: ${e.message}</div>`;
+    cards.innerHTML = `<div class="error-msg">Error: ${escapeHTML(e.message)}</div>`;
   }
 }
 
@@ -255,10 +260,10 @@ async function loadHealth() {
     tbody.innerHTML = rows.map(([name, svc]) => {
       const status = (svc.status || 'unknown').toLowerCase();
       const cls = status === 'healthy' ? 'green' : status === 'degraded' ? 'yellow' : 'red';
-      return `<tr><td>${name}</td><td>${badge(svc.status || 'unknown', cls)}</td><td style="color:var(--muted)">${svc.message || ''}</td></tr>`;
+      return `<tr><td>${escapeHTML(name)}</td><td>${badge(svc.status || 'unknown', cls)}</td><td style="color:var(--muted)">${escapeHTML(svc.message || '')}</td></tr>`;
     }).join('');
   } catch(e) {
-    tbody.innerHTML = `<tr><td colspan="3" class="error-msg">Error: ${e.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="3" class="error-msg">Error: ${escapeHTML(e.message)}</td></tr>`;
   }
 }
 
@@ -273,17 +278,17 @@ async function loadAccount() {
     }
     kv.innerHTML = `
       <dt>Status</dt><dd>${badge('Registered', 'green')}</dd>
-      <dt>Email</dt><dd>${d.account_email || '—'}</dd>
-      <dt>Account ID</dt><dd>${d.account_id || '—'}</dd>
-      <dt>User ID</dt><dd>${d.user_id || '—'}</dd>
-      <dt>System ID</dt><dd>${d.system_id || '—'}</dd>
-      <dt>Hostname</dt><dd>${d.hostname || '—'}</dd>
-      <dt>OS / Arch</dt><dd>${d.os || '—'} / ${d.arch || '—'}</dd>
-      <dt>API Key</dt><dd style="font-family:monospace">${d.api_key || '—'}</dd>
-      <dt>Registered At</dt><dd>${fmtTime(d.registered_at)}</dd>
+      <dt>Email</dt><dd>${escapeHTML(d.account_email || '—')}</dd>
+      <dt>Account ID</dt><dd>${escapeHTML(d.account_id || '—')}</dd>
+      <dt>User ID</dt><dd>${escapeHTML(d.user_id || '—')}</dd>
+      <dt>System ID</dt><dd>${escapeHTML(d.system_id || '—')}</dd>
+      <dt>Hostname</dt><dd>${escapeHTML(d.hostname || '—')}</dd>
+      <dt>OS / Arch</dt><dd>${escapeHTML(d.os || '—')} / ${escapeHTML(d.arch || '—')}</dd>
+      <dt>API Key</dt><dd style="font-family:monospace">${escapeHTML(d.api_key || '—')}</dd>
+      <dt>Registered At</dt><dd>${escapeHTML(fmtTime(d.registered_at))}</dd>
     `;
   } catch(e) {
-    kv.innerHTML = `<div class="error-msg">Error: ${e.message}</div>`;
+    kv.innerHTML = `<div class="error-msg">Error: ${escapeHTML(e.message)}</div>`;
   }
 }
 
