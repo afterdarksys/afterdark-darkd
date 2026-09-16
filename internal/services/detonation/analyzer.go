@@ -115,8 +115,13 @@ func (a *FileAnalyzer) PerformStaticAnalysis(path string) (*models.StaticAnalysi
 		analysis.Strings = strings
 	}
 
-	// TODO: Add PE/ELF parsing for imports, exports, sections
-	// TODO: Add YARA rule matching
+	if err := a.executableMetadata(path, analysis); err != nil {
+		return nil, err
+	}
+	analysis.YaraMatches, err = a.matchYARA(path)
+	if err != nil {
+		return nil, err
+	}
 
 	return analysis, nil
 }
@@ -202,7 +207,7 @@ func (a *FileAnalyzer) detectMagic(file *os.File) (string, string, error) {
 		if strings.HasPrefix(string(buffer[:n]), "#!") {
 			return "#!", "Script", nil
 		}
-		return magicHex[:8], "unknown", nil
+		return magicHex[:min(8, len(magicHex))], "unknown", nil
 	}
 }
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"time"
@@ -40,6 +41,14 @@ func reportsCmd() *cobra.Command {
 			report.Add("Patch compliance", compliance, err)
 			patches, err := client.ListPatches(ctx, &pb.ListPatchesRequest{})
 			report.Add("Patches", patches, err)
+			for _, action := range []string{"check_cis", "check_compliance"} {
+				evidence, fetchErr := client.ManagePlugin(ctx, &pb.PluginRequest{Action: "execute", Name: "contextacld", PluginAction: action, ParamsJson: "{}"})
+				var result any
+				if fetchErr == nil {
+					fetchErr = json.Unmarshal([]byte(evidence.ResultJson), &result)
+				}
+				report.Add("Device policy: "+action, result, fetchErr)
+			}
 		}
 		if kind != "compliance" {
 			threats, err := client.GetThreatStatus(ctx, &pb.GetThreatStatusRequest{})

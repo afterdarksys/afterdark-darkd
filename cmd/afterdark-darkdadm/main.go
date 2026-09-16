@@ -384,10 +384,7 @@ func apiCmd() *cobra.Command {
 		Short: "GET request to API",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			endpoint := args[0]
-			fmt.Printf("GET %s%s\n", apiURL, endpoint)
-			fmt.Println("(API call not yet implemented)")
-			return nil
+			return executeAPI(cmd, "GET", args[0], "")
 		},
 	})
 
@@ -396,15 +393,11 @@ func apiCmd() *cobra.Command {
 		Short: "POST request to API",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			endpoint := args[0]
 			data := ""
 			if len(args) > 1 {
 				data = args[1]
 			}
-			fmt.Printf("POST %s%s\n", apiURL, endpoint)
-			fmt.Printf("Data: %s\n", data)
-			fmt.Println("(API call not yet implemented)")
-			return nil
+			return executeAPI(cmd, "POST", args[0], data)
 		},
 	})
 
@@ -412,11 +405,7 @@ func apiCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Check API connectivity",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Printf("Checking API at %s...\n", apiURL)
-			// TODO: Actual health check
-			fmt.Println("API Status: OK")
-			fmt.Println("Latency: 45ms")
-			return nil
+			return executeAPI(cmd, "GET", "/health", "")
 		},
 	})
 

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 
@@ -51,11 +52,48 @@ func (p *Platform) ListAvailablePatches(ctx context.Context) ([]platform.Patch, 
 	return listUpdates(ctx, false)
 }
 
-// InstallPatch installs a Windows update by KB article ID using wusa.exe.
-// Requires the update .msu to be on disk, or falls back to DISM for in-box components.
+// InstallPatch downloads and installs the exact WUA UpdateID returned by enumeration.
+// It never reboots the machine. Updates requiring EULA acceptance must first be
+// approved through the organization's update management policy.
 func (p *Platform) InstallPatch(ctx context.Context, patchID string) error {
-	// TODO: Implement using Windows Update Agent API
-	return fmt.Errorf("not implemented on windows yet")
+	if !regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`).MatchString(patchID) {
+		return fmt.Errorf("invalid Windows Update ID")
+	}
+	script := `$ErrorActionPreference='Stop'
+$s=New-Object -ComObject Microsoft.Update.Session
+$r=$s.CreateUpdateSearcher().Search("IsInstalled=0 and UpdateID='` + patchID + `'")
+if($r.ResultCode -ne 2 -or $r.Updates.Count -ne 1){throw 'Exact update unavailable or search incomplete'}
+$u=$r.Updates.Item(0)
+if(-not $u.EulaAccepted){throw 'Update EULA must be accepted by administrator first'}
+if($u.InstallationBehavior.CanRequestUserInput){throw 'Update requires interactive installation'}
+$c=New-Object -ComObject Microsoft.Update.UpdateColl
+[void]$c.Add($u)
+$d=$s.CreateUpdateDownloader(); $d.Updates=$c
+$download=$d.Download()
+if($download.ResultCode -ne 2 -or -not $u.IsDownloaded){throw 'Update download failed'}
+$i=$s.CreateUpdateInstaller(); $i.Updates=$c
+if($i.RebootRequiredBeforeInstallation){throw 'Restart required before installation'}
+$result=$i.Install()
+if($result.ResultCode -ne 2 -or $result.GetUpdateResult(0).ResultCode -ne 2){throw 'Update installation failed or incomplete'}
+[pscustomobject]@{success=$true;reboot_required=$result.RebootRequired}|ConvertTo-Json -Compress`
+	out, err := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script).Output()
+	if err != nil {
+		return fmt.Errorf("Windows Update installation: %w", err)
+	}
+	var result struct {
+		Success        bool `json:"success"`
+		RebootRequired bool `json:"reboot_required"`
+	}
+	if err := json.Unmarshal(out, &result); err != nil {
+		return err
+	}
+	if !result.Success {
+		return fmt.Errorf("Windows Update did not confirm installation")
+	}
+	if result.RebootRequired {
+		return fmt.Errorf("update installed; administrator restart required to complete installation")
+	}
+	return nil
 }
 
 // ListInstalledApplications returns installed applications from the Uninstall registry hive.
