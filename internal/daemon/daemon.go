@@ -91,6 +91,7 @@ func New(cfg *models.Config) (*Daemon, error) {
 
 	// Initialize IPC server
 	ipcConfig := &ipc.Config{
+		PluginHost:             pluginHost,
 		RequirePeerCredentials: cfg.IPC.TCPAddr == "",
 		SocketPath:             cfg.IPC.SocketPath,
 		AuthTokenPath:          cfg.IPC.AuthTokenFile,
@@ -373,6 +374,12 @@ func (d *Daemon) startPluginServices(ctx context.Context) error {
 	for _, svc := range services {
 		info := svc.Info()
 		d.logger.Debug("starting plugin service", zap.String("name", info.Name))
+
+		if err := svc.Configure(map[string]interface{}{}); err != nil {
+			lastErr = fmt.Errorf("configure plugin %s: %w", info.Name, err)
+			d.logger.Error("failed to configure plugin service", zap.String("name", info.Name), zap.Error(err))
+			continue
+		}
 
 		if err := svc.Start(ctx); err != nil {
 			d.logger.Error("failed to start plugin service",

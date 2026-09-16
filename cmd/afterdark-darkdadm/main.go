@@ -68,6 +68,8 @@ Use 'darkdadm api' for direct API operations.`,
 	rootCmd.AddCommand(baselineCmd())
 	rootCmd.AddCommand(sysdiffCmd())
 	rootCmd.AddCommand(reportsCmd())
+	rootCmd.AddCommand(pluginCmd())
+	rootCmd.AddCommand(profileCmd())
 	rootCmd.AddCommand(serviceCmd())
 	rootCmd.AddCommand(psCmd())
 	rootCmd.AddCommand(netstatCmd())
@@ -1159,25 +1161,6 @@ func printDiffCategory(name string, diff DiffCategory, showAll bool) {
 		}
 	}
 	fmt.Println()
-}
-
-func reportsCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "reports",
-		Short: "Generate reports",
-	}
-
-	cmd.AddCommand(&cobra.Command{
-		Use:   "generate",
-		Short: "Generate security report",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("Generating security report...")
-			fmt.Println("Report generated: /var/lib/afterdark/reports/latest.json")
-			return nil
-		},
-	})
-
-	return cmd
 }
 
 func serviceCmd() *cobra.Command {

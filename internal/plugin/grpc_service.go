@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/hashicorp/go-plugin"
@@ -30,7 +31,9 @@ func (p *ServicePluginImpl) GRPCClient(ctx context.Context, broker *plugin.GRPCB
 // serviceGRPCServer is the gRPC server for ServicePlugin (plugin side)
 type serviceGRPCServer struct {
 	pb.UnimplementedServicePluginServer
-	Impl ServicePlugin
+	Impl            ServicePlugin
+	lifecycleMu     sync.Mutex
+	lifecycleCancel context.CancelFunc
 }
 
 func (s *serviceGRPCServer) Info(ctx context.Context, req *pb.Empty) (*pb.PluginInfo, error) {
@@ -72,17 +75,33 @@ func (s *serviceGRPCServer) Configure(ctx context.Context, req *pb.ConfigureRequ
 }
 
 func (s *serviceGRPCServer) Start(ctx context.Context, req *pb.ServiceStartRequest) (*pb.ServiceStartResponse, error) {
-	err := s.Impl.Start(ctx)
-	if err != nil {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if s.lifecycleCancel != nil {
+		return &pb.ServiceStartResponse{Success: true}, nil
+	}
+	// A plugin service outlives the Start RPC. Stop owns its cancellation.
+	lifetime, cancel := context.WithCancel(context.Background())
+	if err := s.Impl.Start(lifetime); err != nil {
+		cancel()
 		return &pb.ServiceStartResponse{Success: false, Error: err.Error()}, nil
 	}
+	s.lifecycleCancel = cancel
 	return &pb.ServiceStartResponse{Success: true}, nil
 }
 
 func (s *serviceGRPCServer) Stop(ctx context.Context, req *pb.ServiceStopRequest) (*pb.ServiceStopResponse, error) {
-	err := s.Impl.Stop(ctx)
-	if err != nil {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if err := s.Impl.Stop(ctx); err != nil {
 		return &pb.ServiceStopResponse{Success: false, Error: err.Error()}, nil
+	}
+	if s.lifecycleCancel != nil {
+		s.lifecycleCancel()
+		s.lifecycleCancel = nil
 	}
 	return &pb.ServiceStopResponse{Success: true}, nil
 }

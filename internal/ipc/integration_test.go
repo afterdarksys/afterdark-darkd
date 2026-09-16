@@ -208,3 +208,31 @@ func TestIntegration_TCPWithTokenAndTLS(t *testing.T) {
 		t.Fatalf("missing token: %v", err)
 	}
 }
+
+func TestIntegration_ProfilesRequireAuthentication(t *testing.T) {
+	socket, token, cleanup := startTestServer(t, true)
+	defer cleanup()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	wrong, err := NewClientWithToken(ctx, socket, "incorrect")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wrong.CaptureProfile(ctx, &pb.ProfileRequest{Kind: "mem"}); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("unauthenticated profile: %v", err)
+	}
+	if _, err := wrong.ManagePlugin(ctx, &pb.PluginRequest{Action: "list"}); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("unauthenticated plugins: %v", err)
+	}
+	client, err := NewClientWithToken(ctx, socket, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.CaptureProfile(ctx, &pb.ProfileRequest{Kind: "heap"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Data) < 2 || result.Data[0] != 0x1f || result.Data[1] != 0x8b {
+		t.Fatal("heap response is not a gzip pprof profile")
+	}
+}

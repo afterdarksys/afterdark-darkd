@@ -17,6 +17,7 @@ import (
 	pb "github.com/afterdarksys/afterdark-darkd/api/proto/ipc"
 	"github.com/afterdarksys/afterdark-darkd/internal/events"
 	"github.com/afterdarksys/afterdark-darkd/internal/ipc/peercred"
+	"github.com/afterdarksys/afterdark-darkd/internal/plugin"
 	"github.com/afterdarksys/afterdark-darkd/internal/service"
 	"github.com/afterdarksys/afterdark-darkd/internal/service/patch"
 	"github.com/afterdarksys/afterdark-darkd/internal/service/threat"
@@ -41,6 +42,7 @@ const (
 
 // Config holds the IPC server configuration
 type Config struct {
+	PluginHost *plugin.Host
 	// SocketPath is the Unix socket path (Linux/macOS)
 	SocketPath string
 
@@ -91,6 +93,7 @@ func DefaultConfig() *Config {
 
 // Server is the IPC gRPC server
 type Server struct {
+	pluginMu sync.Mutex
 	pb.UnimplementedDaemonServiceServer
 
 	config    *Config

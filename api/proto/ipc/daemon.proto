@@ -7,6 +7,16 @@ option go_package = "github.com/afterdarksys/afterdark-darkd/api/proto/ipc";
 // Empty message for requests with no parameters
 message Empty {}
 
+message PluginRequest {
+  string action = 1;
+  string name = 2;
+  string plugin_action = 3;
+  string params_json = 4;
+}
+message PluginResponse { string result_json = 1; }
+message ProfileRequest { string kind = 1; int32 seconds = 2; }
+message ProfileResponse { bytes data = 1; }
+
 // ============================================================================
 // Common Types
 // ============================================================================
@@ -527,6 +537,8 @@ message ShutdownResponse {
 // ============================================================================
 
 service DaemonService {
+  rpc ManagePlugin(PluginRequest) returns (PluginResponse);
+  rpc CaptureProfile(ProfileRequest) returns (ProfileResponse);
   // Status & Health
   rpc GetStatus(StatusRequest) returns (StatusResponse);
   rpc GetHealth(HealthRequest) returns (HealthResponse);
