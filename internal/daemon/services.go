@@ -418,10 +418,11 @@ func (d *Daemon) InitializeServices() error {
 	// 23. SIEM Forwarder
 	if cfg.Services.SIEM.Enabled || cfg.API.DarkAPI.TelemetryEnabled {
 		siemCfg := &siem.Config{
-			Enabled:   cfg.Services.SIEM.Enabled,
-			URL:       cfg.Services.SIEM.URL,
-			AuthToken: cfg.Services.SIEM.AuthToken,
-			BatchSize: cfg.Services.SIEM.BatchSize,
+			DeploymentMode: cfg.Daemon.Mode,
+			Enabled:        cfg.Services.SIEM.Enabled,
+			URL:            cfg.Services.SIEM.URL,
+			AuthToken:      cfg.Services.SIEM.AuthToken,
+			BatchSize:      cfg.Services.SIEM.BatchSize,
 		}
 
 		if cfg.API.DarkAPI.TelemetryEnabled {

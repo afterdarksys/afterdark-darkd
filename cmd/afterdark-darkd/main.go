@@ -26,11 +26,12 @@ var (
 )
 
 var (
-	configPath   string
-	logLevel     string
-	foreground   bool
-	debug        bool
-	remoteAccess string
+	configPath     string
+	logLevel       string
+	foreground     bool
+	debug          bool
+	remoteAccess   string
+	deploymentMode string
 )
 
 func validateRemoteAccessMode() error {
@@ -61,6 +62,7 @@ and baseline security assessments across macOS, Windows, and Linux systems.`,
 
 	rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", defaultConfigPath(), "path to configuration file")
 	rootCmd.PersistentFlags().StringVarP(&logLevel, "log-level", "l", "info", "log level (debug, info, warn, error)")
+	rootCmd.PersistentFlags().StringVar(&deploymentMode, "mode", "", "deployment profile: server or desktop (overrides daemon.mode)")
 	rootCmd.PersistentFlags().StringVar(&remoteAccess, "remote", "Enabled", "remote access mode (Enabled, Disabled, Restricted)")
 
 	// Add subcommands
@@ -534,6 +536,7 @@ func configCmd() *cobra.Command {
 		Long:  "View and modify daemon configuration.",
 	}
 
+	cmd.AddCommand(profileCmd())
 	cmd.AddCommand(&cobra.Command{
 		Use:   "show",
 		Short: "Show current configuration",
@@ -569,7 +572,7 @@ func configCmd() *cobra.Command {
 		Use:   "validate",
 		Short: "Validate configuration file",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, err := daemon.LoadConfig(configPath)
+			_, err := daemon.LoadConfigWithMode(configPath, deploymentMode)
 			if err != nil {
 				fmt.Printf("Configuration is invalid: %v\n", err)
 				return err
@@ -833,7 +836,7 @@ func runDaemonWithReady(ctx context.Context, ready func()) error {
 	}
 
 	// Load configuration
-	cfg, err := daemon.LoadConfig(configPath)
+	cfg, err := daemon.LoadConfigWithMode(configPath, deploymentMode)
 	if err != nil {
 		logger.Error("failed to load configuration", zap.Error(err))
 		return fmt.Errorf("failed to load configuration: %w", err)

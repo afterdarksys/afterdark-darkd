@@ -18,11 +18,12 @@ import (
 const ServiceName = "siem_forwarder"
 
 type Config struct {
-	DarkAPI   *darkapi.Client
-	Enabled   bool   `mapstructure:"enabled"`
-	URL       string `mapstructure:"url"`
-	AuthToken string `mapstructure:"auth_token"`
-	BatchSize int    `mapstructure:"batch_size"`
+	DeploymentMode string
+	DarkAPI        *darkapi.Client
+	Enabled        bool   `mapstructure:"enabled"`
+	URL            string `mapstructure:"url"`
+	AuthToken      string `mapstructure:"auth_token"`
+	BatchSize      int    `mapstructure:"batch_size"`
 }
 type Service struct {
 	mu            sync.Mutex

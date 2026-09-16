@@ -18,6 +18,7 @@ type Config struct {
 
 // DaemonConfig holds daemon-specific configuration
 type DaemonConfig struct {
+	Mode      string `yaml:"mode" json:"mode" mapstructure:"mode"`
 	LogLevel  string `yaml:"log_level" json:"log_level"`
 	DataDir   string `yaml:"data_dir" json:"data_dir"`
 	PIDFile   string `yaml:"pid_file" json:"pid_file"`

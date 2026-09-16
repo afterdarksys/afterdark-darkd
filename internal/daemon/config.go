@@ -3,6 +3,7 @@ package daemon
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/afterdarksys/afterdark-darkd/internal/models"
@@ -10,9 +11,9 @@ import (
 )
 
 // LoadConfig loads configuration from the specified file
-func LoadConfig(path string) (*models.Config, error) {
-	// Start with defaults
-	cfg := models.DefaultConfig()
+func LoadConfig(path string) (*models.Config, error) { return LoadConfigWithMode(path, "") }
+
+func LoadConfigWithMode(path, override string) (*models.Config, error) {
 
 	// Read config file
 	data, err := os.ReadFile(path)
@@ -23,10 +24,32 @@ func LoadConfig(path string) (*models.Config, error) {
 	// Expand environment variables
 	data = []byte(os.ExpandEnv(string(data)))
 
+	// Select profile defaults first, then preserve all explicit YAML settings.
+	var header struct {
+		Daemon struct {
+			Mode string `yaml:"mode"`
+		} `yaml:"daemon"`
+	}
+	if err := yaml.Unmarshal(data, &header); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+	mode := header.Daemon.Mode
+	if value, ok := os.LookupEnv("DARKD_DAEMON_MODE"); ok {
+		mode = value
+	}
+	if override != "" {
+		mode = override
+	}
+	cfg, err := models.DefaultConfigForMode(mode, runtime.GOOS)
+	if err != nil {
+		return nil, err
+	}
 	// Parse YAML
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
+
+	cfg.Daemon.Mode = mode
 
 	// Validate configuration
 	if err := ValidateConfig(cfg); err != nil {
@@ -39,6 +62,12 @@ func LoadConfig(path string) (*models.Config, error) {
 // ValidateConfig validates the configuration
 func ValidateConfig(cfg *models.Config) error {
 	var errors []string
+	if cfg == nil {
+		return fmt.Errorf("configuration is nil")
+	}
+	if !models.ValidMode(cfg.Daemon.Mode) {
+		errors = append(errors, "daemon.mode must be server, desktop or legacy")
+	}
 
 	// Validate daemon config
 	if cfg.Daemon.DataDir == "" {

@@ -71,7 +71,7 @@ func (s *Service) coverage(ctx context.Context, store *events.Store) error {
 	for _, value := range states {
 		list = append(list, value)
 	}
-	raw, err := json.Marshal(map[string]any{"sensors": list, "platform": runtime.GOOS})
+	raw, err := json.Marshal(map[string]any{"sensors": list, "platform": runtime.GOOS, "deployment_mode": s.config.DeploymentMode})
 	if err != nil {
 		return err
 	}

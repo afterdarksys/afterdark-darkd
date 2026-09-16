@@ -2,8 +2,10 @@ package daemon
 
 import (
 	"fmt"
+	"gopkg.in/yaml.v3"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -14,7 +16,8 @@ import (
 
 // ViperConfig wraps Viper for configuration management
 type ViperConfig struct {
-	v *viper.Viper
+	file string
+	v    *viper.Viper
 }
 
 // NewViperConfig creates a new Viper configuration manager
@@ -66,6 +69,9 @@ func (vc *ViperConfig) Load(paths ...string) (*models.Config, error) {
 		}
 	}
 
+	if vc.file != "" {
+		v.SetConfigFile(vc.file)
+	}
 	// Read config file
 	if err := v.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
@@ -80,9 +86,22 @@ func (vc *ViperConfig) Load(paths ...string) (*models.Config, error) {
 	//     fmt.Println("Config file changed:", e.Name)
 	// })
 
+	// Reset profile defaults on reload; explicit file/env/Set values keep precedence.
+	setProfileDefaults(v, models.DefaultConfig())
+	setDefaults(v)
 	// Unmarshal into config struct
-	cfg := models.DefaultConfig()
-	if err := v.Unmarshal(cfg); err != nil {
+	cfg, err := models.DefaultConfigForMode(v.GetString("daemon.mode"), runtime.GOOS)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Daemon.Mode != "legacy" {
+		setProfileDefaults(v, cfg)
+	}
+	raw, err := yaml.Marshal(v.AllSettings())
+	if err != nil {
+		return nil, err
+	}
+	if err := yaml.Unmarshal(raw, cfg); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
@@ -108,17 +127,16 @@ func (vc *ViperConfig) ConfigFile() string {
 func (vc *ViperConfig) WatchConfig(onChange func(cfg *models.Config)) {
 	vc.v.WatchConfig()
 	vc.v.OnConfigChange(func(e fsnotify.Event) {
-		cfg := models.DefaultConfig()
-		if err := vc.v.Unmarshal(cfg); err == nil {
-			if onChange != nil {
-				onChange(cfg)
-			}
+		cfg, err := vc.Load()
+		if err == nil && onChange != nil {
+			onChange(cfg)
 		}
 	})
 }
 
 // setDefaults configures Viper defaults from models.DefaultConfig
 func setDefaults(v *viper.Viper) {
+	v.SetDefault("daemon.mode", "legacy")
 	v.SetDefault("services.investigation.enabled", false)
 	v.SetDefault("services.investigation.retention", 7*24*time.Hour)
 	v.SetDefault("services.investigation.max_events", 100000)
@@ -235,6 +253,7 @@ func (vc *ViperConfig) BindFlags(flagName, configKey string) {
 
 // SetConfigFile explicitly sets the config file to use
 func (vc *ViperConfig) SetConfigFile(path string) {
+	vc.file = path
 	vc.v.SetConfigFile(path)
 }
 
@@ -329,4 +348,26 @@ func initConfigDir() error {
 	}
 
 	return nil
+}
+
+// Viper defaults remain below explicit file, environment and runtime overrides.
+func setProfileDefaults(v *viper.Viper, cfg *models.Config) {
+	raw, _ := yaml.Marshal(cfg)
+	var fields map[string]interface{}
+	_ = yaml.Unmarshal(raw, &fields)
+	var walk func(string, map[string]interface{})
+	walk = func(prefix string, values map[string]interface{}) {
+		for key, value := range values {
+			name := key
+			if prefix != "" {
+				name = prefix + "." + key
+			}
+			if nested, ok := value.(map[string]interface{}); ok {
+				walk(name, nested)
+			} else {
+				v.SetDefault(name, value)
+			}
+		}
+	}
+	walk("", fields)
 }
