@@ -95,6 +95,7 @@ func newRoot() *cobra.Command {
 	login.MarkFlagRequired("email")
 	auth.AddCommand(login)
 	root.AddCommand(auth)
+	root.AddCommand(integrationsCmd())
 	root.AddCommand(&cobra.Command{Use: "health", Short: "Check API connectivity (does not verify authentication)", RunE: call(func(ctx context.Context, c *cloud.Client) (interface{}, error) {
 		err := c.Health(ctx)
 		return map[string]bool{"reachable": err == nil}, err
