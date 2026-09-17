@@ -1,5 +1,21 @@
 # Nine-commit platform enhancement series
 
+
+## September 17 qualification update
+
+Subsequent suite acceptance supersedes the earlier unexecuted-runtime notes below:
+read-only inventory passed on hosted macOS, Windows, Ubuntu, Debian and Rocky;
+Windows service registration/start/authenticated named-pipe status/stop/removal
+passed; DEB/RPM/MSI install/startup/uninstall passed. Docker authenticated IPC and
+Helm non-root startup, pod replacement, credential persistence and removal were
+exercised locally. Terraform providers validate and cloud bootstraps have executable
+fixtures; no live cloud apply or signed extension activation was performed.
+
+Evidence and remaining limits: [suite reassessment](https://github.com/straticus1/afterdark-security-suite/blob/main/docs/REASSESSMENT_2026-09-17.md).
+These results do not qualify every native sensor, prevention mode or production
+release gate in the original phase table.
+
+
 This series implements the first working slices of the seven-phase [roadmap](ROADMAP.md). It does not mark the full roadmap complete. The [code review](CODE_REVIEW.md) remains a historical record of the starting commit.
 
 ## Commits
