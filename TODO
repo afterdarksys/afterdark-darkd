@@ -16,7 +16,8 @@ Current development priorities and roadmap.
 - [ ] TICKET-011: Complete Windows platform support
 - [ ] TICKET-012: Complete Debian/Ubuntu support
 - [ ] TICKET-013: Complete RHEL/Rocky support
-- [ ] TICKET-014: Cross-platform integration tests
+- [x] TICKET-014: Cross-platform integration tests
+  - Read-only native inventory passed on macOS, Windows, Ubuntu, Debian and Rocky; sensor qualification remains under platform tickets.
 
 ### Phase 3: IPC Layer
 - [x] TICKET-043: gRPC/protobuf definitions
@@ -27,7 +28,8 @@ Current development priorities and roadmap.
 
 ### Phase 4: Service Installers
 - [ ] TICKET-050: macOS launchd installer
-- [ ] TICKET-051: Windows service installer
+- [x] TICKET-051: Windows service installer
+  - Hosted native install/start/authenticated named-pipe IPC/stop/removal passed in run 35187775933. Upgrade/rollback and signing remain release gates.
 - [ ] TICKET-052: Linux systemd installer
 - [ ] TICKET-053: Package installers (.pkg, .msi, .deb, .rpm)
 
@@ -40,9 +42,12 @@ Current development priorities and roadmap.
 - [ ] TICKET-057: E2E test scenarios
 
 ### Additional API Integrations
-- [ ] TICKET-024: DNSScience.io client
-- [ ] TICKET-025: Veribits.com client
-- [ ] TICKET-026: systemapi.io, computeapi.io, planetapi.ai
+- [x] TICKET-024: DNSScience.io client
+  - Domain enrichment contract and error/auth tests; live account acceptance pending.
+- [x] TICKET-025: Veribits.com client
+  - DNS records contract with Bearer JWT; live account acceptance pending.
+- [x] TICKET-026: systemapi.io, computeapi.io, planetapi.ai
+  - Fleet, database inventory and IP blacklist clients; additional operations and provider-side gaps are documented in internal/api/ecosystem/README.md.
 
 ### Reporting
 - [x] TICKET-040: Report generation (JSON, HTML, PDF)
@@ -55,9 +60,10 @@ Current development priorities and roadmap.
 ### Infrastructure
 - [x] TICKET-061: Docker deployment
   - Image built and authenticated IPC status/profile exercised in an isolated local container
-- [ ] TICKET-062: Kubernetes deployment (Helm chart)
-  - Non-root StatefulSet chart added; lint/render pass, cluster acceptance pending
+- [x] TICKET-062: Kubernetes deployment (Helm chart)
+  - Disposable kind install, non-root authenticated IPC, persistent credential across pod replacement, uninstall and cleanup passed. Container scope; host sensors may be degraded.
 - [ ] TICKET-063: Terraform modules (AWS, Azure, GCP)
+  - Implemented, provider-validated and bootstrap-tested; staging plan/apply/identity acceptance still required.
 
 ### Documentation
 - [ ] TICKET-058: User documentation
