@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-darkd
+data:
+  darkd.yaml: |
+    daemon:
+      mode: legacy
+      data_dir: /var/lib/afterdark
+      pid_file: /var/run/afterdark/darkd.pid
+      plugin_dir: /var/lib/afterdark/plugins
+    ipc:
+      socket_path: /var/run/afterdark/ipc/darkd.sock
+      auth_enabled: true
+      auth_token_file: /var/lib/afterdark/auth/.auth_token
+    storage:
+      backend: json
+      path: /var/lib/afterdark/data
+    api:
+      darkapi:
+        url: {{ .Values.darkapiURL | quote }}
+        credential_file: {{ if .Values.telemetryEnabled }}/etc/afterdark/credentials/credentials.json{{ else }}""{{ end }}
+        telemetry_enabled: {{ .Values.telemetryEnabled }}
+    services:
+      patch_monitor:
+        enabled: false
+      threat_intel:
+        enabled: false
+      baseline_scanner:
+        enabled: false
+      network_monitor:
+        enabled: false

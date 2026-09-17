@@ -96,3 +96,19 @@ docker run -d \
 ---
 
 After Dark Systems, LLC
+
+## Kubernetes acceptance (2026-09-17)
+
+A disposable kind cluster exercised chart installation, non-root startup,
+authenticated IPC status, pod replacement and persistence of the authentication
+credential. Runtime tests identified and fixed root-owned volume mountpoints
+being chmod'ed by the non-root daemon: tokens and sockets now use owned child
+directories. Optional credential files are omitted when telemetry is disabled;
+configuration checksums trigger pod replacement on changes.
+
+Reproduce with `bash deployments/tests/helm-acceptance.sh IMAGE:TAG` after building
+the Docker image. The script owns a temporary kubeconfig and cluster, verifies
+uninstall, and removes its test PVC. It never selects a pre-existing cluster.
+Readiness means authenticated daemon IPC is available. Container-restricted
+sensors can still report degraded health (eBPF privileges, host integrity paths,
+unsupported registry monitoring); this is not host EDR or SaaS acceptance.
