@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -108,6 +109,8 @@ func New(cfg *models.Config) (*Daemon, error) {
 		return nil, fmt.Errorf("failed to initialize IPC server: %w", err)
 	}
 
+	workflowWeb := web.New(registry, logger, cfg.IPC.AuthTokenFile)
+	workflowWeb.ConfigureWorkflows(filepath.Join(cfg.Daemon.DataDir, "workflows"), cfg.Daemon.WorkflowEvidenceDir)
 	return &Daemon{
 		config:     cfg,
 		registry:   registry,
@@ -115,7 +118,7 @@ func New(cfg *models.Config) (*Daemon, error) {
 		logger:     logger,
 		pluginHost: pluginHost,
 		ipcServer:  ipcServer,
-		webServer:  web.New(registry, logger, cfg.IPC.AuthTokenFile),
+		webServer:  workflowWeb,
 		shutdownCh: make(chan struct{}),
 		doneCh:     make(chan struct{}),
 		pidFile:    cfg.Daemon.PIDFile,

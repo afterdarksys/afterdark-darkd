@@ -81,8 +81,12 @@ Use 'darkdadm api' for direct API operations.`,
 	rootCmd.AddCommand(consoleCmd())
 	rootCmd.AddCommand(uiCmd())
 	rootCmd.AddCommand(investigateCmd())
+	rootCmd.AddCommand(workflowCmd())
 
 	if err := rootCmd.Execute(); err != nil {
+		if _, ok := err.(*workflowExit); ok {
+			os.Exit(2)
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

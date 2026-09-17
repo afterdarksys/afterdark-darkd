@@ -28,6 +28,7 @@ const addr = "127.0.0.1:7734"
 
 // Server is the embedded admin web server.
 type Server struct {
+	workflows  workflowState
 	registry   *service.Registry
 	httpServer *http.Server
 	logger     *zap.Logger
@@ -47,6 +48,10 @@ func New(registry *service.Registry, logger *zap.Logger, tokenFile ...string) *S
 	}
 	s.started = time.Now()
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/workflows", s.handleWorkflows)
+	mux.HandleFunc("/api/workflows/plan", s.handleWorkflowPlan)
+	mux.HandleFunc("/api/workflows/runs", s.handleWorkflowRuns)
+	mux.HandleFunc("/api/workflows/runs/", s.handleWorkflowRun)
 	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/patches", s.handlePatches)
 	mux.HandleFunc("/api/threats", s.handleThreats)
@@ -132,6 +137,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 
 // Stop shuts down the web server gracefully.
 func (s *Server) Stop(ctx context.Context) error {
+	s.stopWorkflows(ctx)
 	return s.httpServer.Shutdown(ctx)
 }
 

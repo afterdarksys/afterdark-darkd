@@ -18,11 +18,12 @@ type Config struct {
 
 // DaemonConfig holds daemon-specific configuration
 type DaemonConfig struct {
-	Mode      string `yaml:"mode" json:"mode" mapstructure:"mode"`
-	LogLevel  string `yaml:"log_level" json:"log_level"`
-	DataDir   string `yaml:"data_dir" json:"data_dir"`
-	PIDFile   string `yaml:"pid_file" json:"pid_file"`
-	PluginDir string `yaml:"plugin_dir" json:"plugin_dir"`
+	WorkflowEvidenceDir string `yaml:"workflow_evidence_dir" json:"workflow_evidence_dir" mapstructure:"workflow_evidence_dir"`
+	Mode                string `yaml:"mode" json:"mode" mapstructure:"mode"`
+	LogLevel            string `yaml:"log_level" json:"log_level"`
+	DataDir             string `yaml:"data_dir" json:"data_dir"`
+	PIDFile             string `yaml:"pid_file" json:"pid_file"`
+	PluginDir           string `yaml:"plugin_dir" json:"plugin_dir"`
 }
 
 // APIConfig holds all API endpoint configurations

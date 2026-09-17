@@ -147,6 +147,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("daemon.data_dir", defaults.Daemon.DataDir)
 	v.SetDefault("daemon.pid_file", defaults.Daemon.PIDFile)
 	v.SetDefault("daemon.plugin_dir", defaults.Daemon.PluginDir)
+	v.SetDefault("daemon.workflow_evidence_dir", "")
 
 	// API defaults - AfterDark
 	v.SetDefault("api.afterdark.url", "https://api.afterdarksys.com")
