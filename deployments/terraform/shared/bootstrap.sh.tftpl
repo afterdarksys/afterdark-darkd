@@ -43,15 +43,17 @@ case "$provider" in
 esac
 install -d -m 0700 /etc/afterdark /var/lib/afterdark
 install -d -m 0755 /var/log/afterdark /run/afterdark
-python3 - "$work/key" "$work/config.json" <<'PY'
+python3 - "$work/key" "$work/config.json" "$work/credentials.json" <<'PY'
 import json, pathlib, sys
 key = pathlib.Path(sys.argv[1]).read_text().rstrip('\n')
 if not key or key == 'null': raise SystemExit('Secret manager returned no API key')
 config = {'daemon': {'mode':'server', 'log_level':'info', 'data_dir':'/var/lib/afterdark', 'pid_file':'/run/afterdark/darkd.pid'},
-          'api': {'darkapi': {'url':'https://api.darkapi.io', 'api_key':key}},
+          'api': {'darkapi': {'url':'https://api.darkapi.io', 'credential_file':'/etc/afterdark/credentials.json'}},
           'services': {'patch_monitor': {'enabled':True}, 'threat_intel': {'enabled':True}}}
 pathlib.Path(sys.argv[2]).write_text(json.dumps(config))
+pathlib.Path(sys.argv[3]).write_text(json.dumps({'base_url':'https://api.darkapi.io','api_key':key}))
 PY
+install -m 0600 "$work/credentials.json" /etc/afterdark/credentials.json
 install -m 0600 "$work/config.json" /etc/afterdark/darkd.yaml
 install -m 0755 "$work/afterdark-darkd" /usr/local/bin/afterdark-darkd
 cat > /etc/systemd/system/afterdark-darkd.service <<'SERVICE'

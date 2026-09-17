@@ -26,7 +26,7 @@ daemon_binaries = {
 
 The bootstrap rejects missing/mismatched checksums before installing the daemon.
 It installs cloud prerequisites, fetches the API key using the instance identity,
-writes a mode-0600 JSON configuration (valid YAML), and starts the systemd unit
+writes mode-0600 configuration and a separate JSON credential file (preserving literal dollar signs), and starts the systemd unit
 with `run --config ... --remote Disabled`. Existing daemon files are replaced only
 after checksum and secret retrieval succeed. Provisioning does not expose remote
 management ports. The legacy `afterdark_version` input is retained for compatibility;

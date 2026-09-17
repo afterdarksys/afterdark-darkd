@@ -17,7 +17,7 @@ class BootstrapTests(unittest.TestCase):
             root = Path(temp)
             mocks = root/'bin'; mocks.mkdir()
             payload = b'#!/bin/sh\nexit 0\n'
-            key = 'secret"with\\escapes\nand-newline'
+            key = '$HOME-secret"with\\escapes\nand-newline'
             settings = dict(provider=provider, region='test-region', secret='test-secret', client_id='test-client',
                             binaries={'amd64': {'url':'https://example.invalid/darkd','sha256': '0'*64 if bad_hash else hashlib.sha256(payload).hexdigest()},
                                       'arm64': {'url':'https://example.invalid/darkd','sha256': '0'*64 if bad_hash else hashlib.sha256(payload).hexdigest()}})
@@ -54,7 +54,10 @@ elif name=='systemctl' and args==['is-active','--quiet','afterdark-darkd']: pass
             else:
                 self.assertEqual(result.returncode,0,result.stderr)
                 config=root/'etc/afterdark/darkd.yaml'
-                self.assertEqual(json.loads(config.read_text())['api']['darkapi']['api_key'],key)
+                credentials=root/'etc/afterdark/credentials.json'
+                self.assertEqual(json.loads(credentials.read_text())['api_key'],key)
+                self.assertEqual(credentials.stat().st_mode & 0o777,0o600)
+                self.assertNotIn(key,config.read_text())
                 self.assertEqual(config.stat().st_mode & 0o777,0o600)
                 self.assertEqual((root/'usr/local/bin/afterdark-darkd').read_bytes(),payload)
                 unit=(root/'etc/systemd/system/afterdark-darkd.service').read_text()
