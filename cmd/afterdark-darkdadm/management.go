@@ -12,6 +12,7 @@ import (
 
 func pluginCmd() *cobra.Command {
 	root := &cobra.Command{Use: "plugin", Short: "Manage trusted plugins in the current daemon session"}
+	catalogCommands(root)
 	for _, action := range []string{"list", "enable", "disable", "reload", "execute"} {
 		action := action
 		command := &cobra.Command{Use: action, Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {

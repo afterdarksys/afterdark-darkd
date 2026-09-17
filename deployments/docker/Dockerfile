@@ -11,11 +11,11 @@ COPY . .
 RUN CGO_ENABLED=0 make build
 
 # Runtime stage
-FROM alpine:3.19
+FROM alpine:3.22
 
 RUN apk add --no-cache ca-certificates tzdata
 
-RUN addgroup -S afterdark && adduser -S afterdark -G afterdark
+RUN addgroup -S -g 101 afterdark && adduser -S -u 100 afterdark -G afterdark
 
 COPY --from=builder /src/dist/afterdark-darkd /usr/local/bin/
 COPY --from=builder /src/dist/afterdark-darkdadm /usr/local/bin/
@@ -24,13 +24,13 @@ COPY --from=builder /src/dist/darkapi /usr/local/bin/
 RUN mkdir -p /etc/afterdark /var/lib/afterdark /var/log/afterdark /var/run/afterdark && \
     chown -R afterdark:afterdark /var/lib/afterdark /var/log/afterdark /var/run/afterdark
 
-COPY configs/darkd.yaml.example /etc/afterdark/darkd.yaml
+COPY deployments/docker/darkd.yaml /etc/afterdark/darkd.yaml
 
 USER afterdark
 
 VOLUME ["/var/lib/afterdark", "/var/log/afterdark"]
 
-EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s CMD ["/usr/local/bin/afterdark-darkdadm", "status", "--token-file", "/var/lib/afterdark/.auth_token", "--socket", "/var/run/afterdark/darkd.sock", "--json"]
 
 ENTRYPOINT ["/usr/local/bin/afterdark-darkd"]
-CMD ["--config", "/etc/afterdark/darkd.yaml"]
+CMD ["run", "--config", "/etc/afterdark/darkd.yaml"]

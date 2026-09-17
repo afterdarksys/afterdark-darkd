@@ -19,10 +19,10 @@ Current development priorities and roadmap.
 - [ ] TICKET-014: Cross-platform integration tests
 
 ### Phase 3: IPC Layer
-- [ ] TICKET-043: gRPC/protobuf definitions
-- [ ] TICKET-044: IPC server implementation
-- [ ] TICKET-045: IPC authentication (token-based)
-- [ ] TICKET-046: Connect admin CLI to daemon
+- [x] TICKET-043: gRPC/protobuf definitions
+- [x] TICKET-044: IPC server implementation
+- [x] TICKET-045: IPC authentication (token-based)
+- [x] TICKET-046: Connect admin CLI to daemon
 - [ ] TICKET-048: Connect user CLI to daemon
 
 ### Phase 4: Service Installers
@@ -45,15 +45,18 @@ Current development priorities and roadmap.
 - [ ] TICKET-026: systemapi.io, computeapi.io, planetapi.ai
 
 ### Reporting
-- [ ] TICKET-040: Report generation (JSON, HTML, PDF)
+- [x] TICKET-040: Report generation (JSON, HTML, PDF)
 - [ ] TICKET-041: Compliance reports
-- [ ] TICKET-042: Exposure analysis reports
+  - Patch, CIS and policy evidence retrieval implemented; complete runtime acceptance remains open
+- [x] TICKET-042: Exposure analysis reports
 
 ## Low Priority
 
 ### Infrastructure
-- [ ] TICKET-061: Docker deployment
+- [x] TICKET-061: Docker deployment
+  - Image built and authenticated IPC status/profile exercised in an isolated local container
 - [ ] TICKET-062: Kubernetes deployment (Helm chart)
+  - Non-root StatefulSet chart added; lint/render pass, cluster acceptance pending
 - [ ] TICKET-063: Terraform modules (AWS, Azure, GCP)
 
 ### Documentation
@@ -104,3 +107,10 @@ Current development priorities and roadmap.
 See ROADMAP.md for full 69-ticket breakdown with effort estimates.
 
 After Dark Systems, LLC
+
+## Verification update (2026-09-16)
+
+IPC authentication/integration tests and reporting tests pass. Report commands
+collect actual daemon evidence, preserve unavailable sections, and support JSON,
+HTML, and PDF. Compliance reports retrieve patch, CIS and policy evidence; missing services
+produce incomplete reports. They do not certify regulatory compliance. See ../docs/TODO_PROGRESS.md for remaining work.

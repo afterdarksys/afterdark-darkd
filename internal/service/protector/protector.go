@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -38,13 +40,14 @@ type Service struct {
 
 // Config holds protector service configuration
 type Config struct {
-	Enabled           bool          `yaml:"enabled"`
-	ProtectorURL      string        `yaml:"protector_url"`
-	ClientID          string        `yaml:"client_id"`
-	AgentID           string        `yaml:"agent_id"`
-	APIKey            string        `yaml:"api_key"`
-	ReconnectDelay    time.Duration `yaml:"reconnect_delay"`
-	HeartbeatInterval time.Duration `yaml:"heartbeat_interval"`
+	AllowRemoteResponse bool          `yaml:"allow_remote_response"`
+	Enabled             bool          `yaml:"enabled"`
+	ProtectorURL        string        `yaml:"protector_url"`
+	ClientID            string        `yaml:"client_id"`
+	AgentID             string        `yaml:"agent_id"`
+	APIKey              string        `yaml:"api_key"`
+	ReconnectDelay      time.Duration `yaml:"reconnect_delay"`
+	HeartbeatInterval   time.Duration `yaml:"heartbeat_interval"`
 
 	// Collection intervals
 	ProcessInterval       time.Duration `yaml:"process_interval"`
@@ -107,6 +110,17 @@ type Message struct {
 
 // NewService creates a new protector service
 func NewService(config *Config, registry ServiceRegistry) *Service {
+	cfg := Config{}
+	if config != nil {
+		cfg = *config
+	}
+	config = &cfg
+	if config.ReconnectDelay <= 0 {
+		config.ReconnectDelay = 5 * time.Second
+	}
+	if config.HeartbeatInterval <= 0 {
+		config.HeartbeatInterval = 30 * time.Second
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Service{
@@ -162,9 +176,8 @@ func (s *Service) Stop() error {
 		s.conn.Close(websocket.StatusNormalClosure, "agent shutting down")
 	}
 
-	close(s.alertQueue)
-	close(s.telemetryQueue)
-	close(s.commandResponse)
+	// Producers stop through context cancellation; closing these queues races with sends.
+	s.connected = false
 
 	log.Println("[Protector] Service stopped")
 	return nil
@@ -179,16 +192,22 @@ func (s *Service) connect() error {
 		return nil
 	}
 
-	log.Printf("[Protector] Connecting to %s...", s.config.ProtectorURL)
-
-	// Build URL without credentials
-	wsURL := fmt.Sprintf("%s?client_id=%s&agent_id=%s",
-		s.config.ProtectorURL,
-		s.config.ClientID,
-		s.config.AgentID,
-	)
+	u, err := url.Parse(s.config.ProtectorURL)
+	if err != nil || u.Host == "" || u.User != nil || u.Fragment != "" {
+		return fmt.Errorf("invalid protector URL")
+	}
+	ip := net.ParseIP(u.Hostname())
+	if u.Scheme != "wss" && !(u.Scheme == "ws" && (u.Hostname() == "localhost" || ip != nil && ip.IsLoopback())) {
+		return fmt.Errorf("protector requires WSS outside loopback")
+	}
+	query := u.Query()
+	query.Set("client_id", s.config.ClientID)
+	query.Set("agent_id", s.config.AgentID)
+	u.RawQuery = query.Encode()
+	wsURL := u.String()
 	// Pass API key as a header
 	opts := &websocket.DialOptions{
+		HTTPClient: &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 		HTTPHeader: http.Header{
 			"X-API-Key": []string{s.config.APIKey},
 		},
@@ -316,28 +335,16 @@ func (s *Service) executeCommand(cmd Command) {
 		Data:      make(map[string]interface{}),
 	}
 
-	switch cmd.Type {
-	case "kill_process":
-		// TODO: Implement process killing
-		response.Success = true
-		response.Data["message"] = "Process kill not yet implemented"
-
-	case "block_connection":
-		// TODO: Implement connection blocking
-		response.Success = true
-		response.Data["message"] = "Connection blocking not yet implemented"
-
-	case "collect_forensics":
-		// TODO: Implement forensics collection
-		response.Success = true
-		response.Data["message"] = "Forensics collection not yet implemented"
-
-	default:
-		response.Success = false
-		response.Error = fmt.Sprintf("Unknown command type: %s", cmd.Type)
+	data, err := s.handleCommand(cmd)
+	response.Success = err == nil
+	response.Data = data
+	if err != nil {
+		response.Error = err.Error()
 	}
-
-	s.commandResponse <- response
+	select {
+	case s.commandResponse <- response:
+	case <-s.ctx.Done():
+	}
 }
 
 // messageSender sends queued messages to platform
@@ -406,7 +413,7 @@ func (s *Service) sendPong() {
 
 // QueueAlert queues an alert to be sent to the platform
 func (s *Service) QueueAlert(alert Alert) {
-	if !s.config.Enabled {
+	if !s.config.Enabled || s.ctx.Err() != nil {
 		return
 	}
 
@@ -420,7 +427,7 @@ func (s *Service) QueueAlert(alert Alert) {
 
 // QueueTelemetry queues telemetry data to be sent
 func (s *Service) QueueTelemetry(dataType string, data interface{}) {
-	if !s.config.Enabled {
+	if !s.config.Enabled || s.ctx.Err() != nil {
 		return
 	}
 
@@ -455,59 +462,9 @@ func (s *Service) setDisconnected() {
 	}
 }
 
-// Data collection methods (stub implementations)
-
-func (s *Service) collectProcessData() {
-	ticker := time.NewTicker(s.config.ProcessInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-s.ctx.Done():
-			return
-		case <-ticker.C:
-			// TODO: Collect process data from process service
-			// For now, send empty placeholder
-			s.QueueTelemetry("process_snapshot", map[string]interface{}{
-				"processes": []interface{}{},
-			})
-		}
-	}
-}
-
-func (s *Service) collectNetworkData() {
-	ticker := time.NewTicker(s.config.NetworkInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-s.ctx.Done():
-			return
-		case <-ticker.C:
-			// TODO: Collect network data from network service
-			s.QueueTelemetry("network_snapshot", map[string]interface{}{
-				"connections": []interface{}{},
-			})
-		}
-	}
-}
-
-func (s *Service) collectBehaviorData() {
-	ticker := time.NewTicker(s.config.BehaviorInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-s.ctx.Done():
-			return
-		case <-ticker.C:
-			// TODO: Collect behavior data from behavior service
-			s.QueueTelemetry("behavior_analysis", map[string]interface{}{
-				"risk_score": 0,
-			})
-		}
-	}
-}
+func (s *Service) collectProcessData()  { s.collect("process_snapshot", s.config.ProcessInterval) }
+func (s *Service) collectNetworkData()  { s.collect("network_snapshot", s.config.NetworkInterval) }
+func (s *Service) collectBehaviorData() { s.collect("behavior_analysis", s.config.BehaviorInterval) }
 
 // Name returns the service name
 func (s *Service) Name() string {

@@ -78,7 +78,11 @@ func (s *Service) deliver(ctx context.Context, route Route, batch []events.Event
 	case "datadog":
 		logs := make([]map[string]any, 0, len(batch))
 		for _, e := range batch {
-			logs = append(logs, map[string]any{"message": e, "service": e.Source, "hostname": e.Endpoint, "ddsource": "afterdark", "event_id": e.ID})
+			payload, err := json.Marshal(e)
+			if err != nil {
+				return err
+			}
+			logs = append(logs, map[string]any{"message": string(payload), "service": e.Source, "hostname": e.Endpoint, "ddsource": "afterdark", "event_id": e.ID})
 		}
 		if err := enc.Encode(logs); err != nil {
 			return err

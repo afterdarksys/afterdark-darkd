@@ -1,0 +1,26 @@
+daemon:
+  mode: legacy
+  log_level: info
+  data_dir: /var/lib/afterdark
+  pid_file: /var/run/afterdark/darkd.pid
+  plugin_dir: /var/lib/afterdark/plugins
+ipc:
+  socket_path: /var/run/afterdark/darkd.sock
+  auth_enabled: true
+  auth_token_file: /var/lib/afterdark/.auth_token
+storage:
+  backend: json
+  path: /var/lib/afterdark/data
+services:
+  # Container scope only. Host scanning requires a separate endpoint deployment.
+  patch_monitor:
+    enabled: false
+  threat_intel:
+    enabled: false
+  baseline_scanner:
+    enabled: false
+  network_monitor:
+    enabled: false
+api:
+  darkapi:
+    telemetry_enabled: false

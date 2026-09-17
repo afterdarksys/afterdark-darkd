@@ -1,0 +1,6 @@
+apiVersion: v2
+name: darkd
+description: Authenticated AfterDark agent with persistent event storage
+type: application
+version: 1.0.0
+appVersion: "1.0.0"

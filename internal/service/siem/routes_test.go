@@ -39,8 +39,13 @@ func TestVendorAcknowledgements(t *testing.T) {
 				if tc.format == "elastic" && (!strings.HasSuffix(string(data), "\n") || strings.Count(string(data), "\n") != 2) {
 					t.Error("invalid bulk framing")
 				}
-				if tc.format == "datadog" && !json.Valid(data) {
-					t.Error("invalid log JSON")
+				if tc.format == "datadog" {
+					var logs []struct {
+						Message string `json:"message"`
+					}
+					if err := json.Unmarshal(data, &logs); err != nil || len(logs) != 1 || !json.Valid([]byte(logs[0].Message)) {
+						t.Error("Datadog message must contain a JSON string")
+					}
 				}
 				io.WriteString(w, tc.reply)
 			}))
