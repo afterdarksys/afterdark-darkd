@@ -1,0 +1,75 @@
+#!/bin/bash
+set -euo pipefail
+umask 077
+if command -v apt-get >/dev/null; then
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl jq python3 awscli
+elif command -v dnf >/dev/null; then
+  dnf install -y ca-certificates curl jq python3 awscli
+elif command -v yum >/dev/null; then
+  yum install -y ca-certificates curl jq python3 awscli
+else
+  echo 'Unsupported package manager' >&2; exit 1
+fi
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+printf '%s' '${settings}' | base64 -d > "$work/settings.json"
+arch=$(uname -m)
+case "$arch" in x86_64) arch=amd64;; aarch64) arch=arm64;; *) echo 'Unsupported CPU' >&2; exit 1;; esac
+url=$(jq -er --arg arch "$arch" '.binaries[$arch].url' "$work/settings.json")
+sha=$(jq -er --arg arch "$arch" '.binaries[$arch].sha256' "$work/settings.json")
+[[ "$url" == https://* && "$sha" =~ ^[a-fA-F0-9]{64}$ ]] || exit 1
+curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --retry 3 --connect-timeout 15 --max-time 300 "$url" -o "$work/afterdark-darkd"
+printf '%s  %s\n' "$sha" "$work/afterdark-darkd" | sha256sum --check --status
+provider=$(jq -er .provider "$work/settings.json")
+case "$provider" in
+  aws)
+    region=$(jq -er .region "$work/settings.json")
+    secret=$(jq -er .secret "$work/settings.json")
+    aws ssm get-parameter --name "$secret" --with-decryption --region "$region" --output json | jq -er '.Parameter.Value' > "$work/key"
+    ;;
+  azure)
+    client=$(jq -er .client_id "$work/settings.json")
+    token=$(curl --fail --silent --show-error --noproxy '*' --max-time 30 -H 'Metadata: true' "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://vault.azure.net&client_id=$client" | jq -er .access_token)
+    secret=$(jq -er .secret "$work/settings.json")
+    curl --fail --silent --show-error --max-time 30 -H "Authorization: Bearer $token" "$secret?api-version=7.4" | jq -er .value > "$work/key"
+    ;;
+  gcp)
+    token=$(curl --fail --silent --show-error --noproxy '*' --max-time 30 -H 'Metadata-Flavor: Google' http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token | jq -er .access_token)
+    secret=$(jq -er .secret "$work/settings.json")
+    curl --fail --silent --show-error --max-time 30 -H "Authorization: Bearer $token" "https://secretmanager.googleapis.com/v1/$secret:access" | jq -er .payload.data | base64 -d > "$work/key"
+    ;;
+  *) exit 1;;
+esac
+install -d -m 0700 /etc/afterdark /var/lib/afterdark
+install -d -m 0755 /var/log/afterdark /run/afterdark
+python3 - "$work/key" "$work/config.json" <<'PY'
+import json, pathlib, sys
+key = pathlib.Path(sys.argv[1]).read_text().rstrip('\n')
+if not key or key == 'null': raise SystemExit('Secret manager returned no API key')
+config = {'daemon': {'mode':'server', 'log_level':'info', 'data_dir':'/var/lib/afterdark', 'pid_file':'/run/afterdark/darkd.pid'},
+          'api': {'darkapi': {'url':'https://api.darkapi.io', 'api_key':key}},
+          'services': {'patch_monitor': {'enabled':True}, 'threat_intel': {'enabled':True}}}
+pathlib.Path(sys.argv[2]).write_text(json.dumps(config))
+PY
+install -m 0600 "$work/config.json" /etc/afterdark/darkd.yaml
+install -m 0755 "$work/afterdark-darkd" /usr/local/bin/afterdark-darkd
+cat > /etc/systemd/system/afterdark-darkd.service <<'SERVICE'
+[Unit]
+Description=AfterDark Endpoint Security Daemon
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/afterdark-darkd run --config /etc/afterdark/darkd.yaml --remote Disabled
+Restart=on-failure
+RestartSec=10
+RuntimeDirectory=afterdark
+UMask=0077
+[Install]
+WantedBy=multi-user.target
+SERVICE
+systemctl daemon-reload
+systemctl enable afterdark-darkd
+systemctl restart afterdark-darkd
+systemctl is-active --quiet afterdark-darkd

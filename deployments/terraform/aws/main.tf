@@ -91,6 +91,14 @@ resource "aws_security_group" "darkd" {
     description = "HTTPS for API calls"
   }
 
+  egress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "OS package repositories during bootstrap"
+  }
+
   # Outbound DNS
   egress {
     from_port   = 53
@@ -107,80 +115,9 @@ resource "aws_security_group" "darkd" {
 
 # User data script for Linux instances
 locals {
-  linux_userdata = <<-EOF
-    #!/bin/bash
-    set -e
-
-    # Install dependencies
-    yum install -y curl jq || apt-get update && apt-get install -y curl jq
-
-    # Create directories
-    mkdir -p /etc/afterdark /var/lib/afterdark /var/log/afterdark /var/run/afterdark
-
-    # Download binaries
-    ARCH=$(uname -m)
-    case $ARCH in
-      x86_64) ARCH="amd64" ;;
-      aarch64) ARCH="arm64" ;;
-    esac
-
-    curl -fsSL "https://releases.afterdarksys.com/darkd/${var.afterdark_version}/afterdark-darkd-linux-$ARCH" -o /usr/local/bin/afterdark-darkd
-    curl -fsSL "https://releases.afterdarksys.com/darkd/${var.afterdark_version}/afterdark-darkdadm-linux-$ARCH" -o /usr/local/bin/afterdark-darkdadm
-    curl -fsSL "https://releases.afterdarksys.com/darkd/${var.afterdark_version}/darkapi-linux-$ARCH" -o /usr/local/bin/darkapi
-
-    chmod +x /usr/local/bin/afterdark-darkd /usr/local/bin/afterdark-darkdadm /usr/local/bin/darkapi
-
-    # Get API key from SSM
-    DARKAPI_KEY=$(aws ssm get-parameter --name "/afterdark/${var.environment}/darkapi-key" --with-decryption --query "Parameter.Value" --output text --region ${var.aws_region})
-
-    # Create configuration
-    cat > /etc/afterdark/darkd.yaml <<YAML
-    daemon:
-      log_level: info
-      data_dir: /var/lib/afterdark
-      pid_file: /var/run/afterdark/darkd.pid
-
-    api:
-      darkapi:
-        url: https://api.darkapi.io
-        api_key: $DARKAPI_KEY
-        timeout: 30s
-
-    services:
-      patch_monitor:
-        enabled: true
-        scan_interval: 1h
-      threat_intel:
-        enabled: true
-        sync_interval: 6h
-      network_monitor:
-        enabled: true
-        dns_servers:
-          - cache01.dnsscience.io
-          - cache02.dnsscience.io
-    YAML
-
-    # Create systemd service
-    cat > /etc/systemd/system/afterdark-darkd.service <<SERVICE
-    [Unit]
-    Description=After Dark Systems Endpoint Security Daemon
-    After=network-online.target
-    Wants=network-online.target
-
-    [Service]
-    Type=simple
-    ExecStart=/usr/local/bin/afterdark-darkd --config /etc/afterdark/darkd.yaml
-    Restart=always
-    RestartSec=10
-
-    [Install]
-    WantedBy=multi-user.target
-    SERVICE
-
-    systemctl daemon-reload
-    systemctl enable afterdark-darkd
-    systemctl start afterdark-darkd
-  EOF
+  linux_userdata = templatefile("${path.module}/../shared/bootstrap.sh.tftpl", {
+    settings = base64encode(jsonencode({ provider = "aws", region = var.aws_region, secret = aws_ssm_parameter.darkapi_key.name, binaries = var.daemon_binaries }))
+  })
 }
 
 # Launch Template
@@ -194,6 +131,11 @@ resource "aws_launch_template" "darkd" {
   }
 
   vpc_security_group_ids = [aws_security_group.darkd.id]
+
+  metadata_options {
+    http_endpoint = "enabled"
+    http_tokens   = "required"
+  }
 
   user_data = base64encode(local.linux_userdata)
 

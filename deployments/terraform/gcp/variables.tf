@@ -62,3 +62,12 @@ variable "mig_size" {
   type        = number
   default     = 1
 }
+
+variable "daemon_binaries" {
+  description = "Verified standalone Linux daemon artifact URL and SHA-256, keyed by amd64 or arm64. Required: no unverified downloads."
+  type        = map(object({ url = string, sha256 = string }))
+  validation {
+    condition     = length(var.daemon_binaries) > 0 && alltrue([for arch, binary in var.daemon_binaries : contains(["amd64", "arm64"], arch) && can(regex("^https://", binary.url)) && can(regex("^[a-fA-F0-9]{64}$", binary.sha256))])
+    error_message = "Supply HTTPS daemon artifacts with exact SHA-256 checksums for supported architectures."
+  }
+}

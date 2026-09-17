@@ -94,58 +94,10 @@ resource "google_compute_instance_template" "darkd" {
     scopes = ["cloud-platform"]
   }
 
-  metadata_startup_script = <<-EOF
-    #!/bin/bash
-    set -e
-
-    apt-get update && apt-get install -y curl jq
-
-    mkdir -p /etc/afterdark /var/lib/afterdark /var/log/afterdark /var/run/afterdark
-
-    ARCH=$(dpkg --print-architecture)
-    curl -fsSL "https://releases.afterdarksys.com/darkd/${var.afterdark_version}/afterdark-darkd-linux-$ARCH" -o /usr/local/bin/afterdark-darkd
-    curl -fsSL "https://releases.afterdarksys.com/darkd/${var.afterdark_version}/afterdark-darkdadm-linux-$ARCH" -o /usr/local/bin/afterdark-darkdadm
-    curl -fsSL "https://releases.afterdarksys.com/darkd/${var.afterdark_version}/darkapi-linux-$ARCH" -o /usr/local/bin/darkapi
-    chmod +x /usr/local/bin/afterdark-darkd /usr/local/bin/afterdark-darkdadm /usr/local/bin/darkapi
-
-    # Get API key from Secret Manager
-    DARKAPI_KEY=$(gcloud secrets versions access latest --secret="${google_secret_manager_secret.darkapi_key.secret_id}")
-
-    cat > /etc/afterdark/darkd.yaml <<YAML
-    daemon:
-      log_level: info
-      data_dir: /var/lib/afterdark
-    api:
-      darkapi:
-        url: https://api.darkapi.io
-        api_key: $DARKAPI_KEY
-    services:
-      patch_monitor:
-        enabled: true
-      threat_intel:
-        enabled: true
-      network_monitor:
-        enabled: true
-    YAML
-
-    cat > /etc/systemd/system/afterdark-darkd.service <<SERVICE
-    [Unit]
-    Description=After Dark Systems Endpoint Security Daemon
-    After=network-online.target
-
-    [Service]
-    Type=simple
-    ExecStart=/usr/local/bin/afterdark-darkd --config /etc/afterdark/darkd.yaml
-    Restart=always
-
-    [Install]
-    WantedBy=multi-user.target
-    SERVICE
-
-    systemctl daemon-reload
-    systemctl enable afterdark-darkd
-    systemctl start afterdark-darkd
-  EOF
+  metadata_startup_script = templatefile("${path.module}/../shared/bootstrap.sh.tftpl", {
+    settings = base64encode(jsonencode({ provider = "gcp", secret = google_secret_manager_secret_version.darkapi_key.name, binaries = var.daemon_binaries }))
+  })
+  depends_on = [google_secret_manager_secret_iam_member.darkd]
 
   labels = local.common_labels
 

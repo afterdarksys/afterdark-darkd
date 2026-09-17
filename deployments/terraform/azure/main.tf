@@ -43,7 +43,15 @@ resource "azurerm_key_vault" "darkd" {
 
 data "azurerm_client_config" "current" {}
 
+resource "azurerm_key_vault_access_policy" "deployer" {
+  key_vault_id       = azurerm_key_vault.darkd.id
+  tenant_id          = data.azurerm_client_config.current.tenant_id
+  object_id          = data.azurerm_client_config.current.object_id
+  secret_permissions = ["Get", "Set", "Delete", "Recover", "Purge"]
+}
+
 resource "azurerm_key_vault_secret" "darkapi_key" {
+  depends_on   = [azurerm_key_vault_access_policy.deployer]
   name         = "darkapi-key"
   value        = var.darkapi_key
   key_vault_id = azurerm_key_vault.darkd.id
@@ -147,40 +155,10 @@ resource "azurerm_linux_virtual_machine_scale_set" "darkd" {
     identity_ids = [azurerm_user_assigned_identity.darkd.id]
   }
 
-  custom_data = base64encode(<<-EOF
-    #!/bin/bash
-    set -e
-
-    apt-get update && apt-get install -y curl jq
-
-    mkdir -p /etc/afterdark /var/lib/afterdark /var/log/afterdark /var/run/afterdark
-
-    ARCH=$(dpkg --print-architecture)
-    curl -fsSL "https://releases.afterdarksys.com/darkd/${var.afterdark_version}/afterdark-darkd-linux-$ARCH" -o /usr/local/bin/afterdark-darkd
-    chmod +x /usr/local/bin/afterdark-darkd
-
-    # Get API key from Key Vault using managed identity
-    DARKAPI_KEY=$(curl -s "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://vault.azure.net" -H Metadata:true | jq -r .access_token | xargs -I {} curl -s "${azurerm_key_vault.darkd.vault_uri}secrets/darkapi-key?api-version=7.0" -H "Authorization: Bearer {}" | jq -r .value)
-
-    cat > /etc/afterdark/darkd.yaml <<YAML
-    daemon:
-      log_level: info
-      data_dir: /var/lib/afterdark
-    api:
-      darkapi:
-        url: https://api.darkapi.io
-        api_key: $DARKAPI_KEY
-    services:
-      patch_monitor:
-        enabled: true
-      threat_intel:
-        enabled: true
-    YAML
-
-    systemctl enable afterdark-darkd
-    systemctl start afterdark-darkd
-  EOF
-  )
+  custom_data = base64encode(templatefile("${path.module}/../shared/bootstrap.sh.tftpl", {
+    settings = base64encode(jsonencode({ provider = "azure", client_id = azurerm_user_assigned_identity.darkd.client_id, secret = "${azurerm_key_vault.darkd.vault_uri}secrets/darkapi-key", binaries = var.daemon_binaries }))
+  }))
+  depends_on = [azurerm_key_vault_access_policy.darkd, azurerm_key_vault_secret.darkapi_key]
 
   tags = local.common_tags
 }
