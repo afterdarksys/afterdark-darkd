@@ -8,6 +8,7 @@ import (
 	"io"
 	"regexp"
 	"strings"
+	"time"
 )
 
 type Condition struct {
@@ -29,6 +30,11 @@ type RuleSet struct {
 	SHA256        string `json:"-"`
 	SchemaVersion int    `json:"schema_version"`
 	Rules         []Rule `json:"rules"`
+	Sequences     []SequenceDefinition `json:"sequences,omitempty"`
+}
+
+type SequenceDefinition struct {
+	ID string `json:"id"`; Version string `json:"version"`; Description string `json:"description,omitempty"`; WithinSeconds int `json:"within_seconds"`; Steps []Rule `json:"steps"`
 }
 
 type Match struct {
@@ -60,7 +66,7 @@ func LoadRules(r io.Reader) (*RuleSet, error) {
 	if err := d.Decode(&extra); err != io.EOF {
 		return nil, fmt.Errorf("rules must contain exactly one JSON object")
 	}
-	if rules.SchemaVersion != SchemaVersion || len(rules.Rules) == 0 || len(rules.Rules) > 1000 {
+	if rules.SchemaVersion != SchemaVersion || (len(rules.Rules) == 0 && len(rules.Sequences) == 0) || len(rules.Rules) > 1000 || len(rules.Sequences) > 1000 {
 		return nil, fmt.Errorf("unsupported rule schema or invalid rule count (1–1000)")
 	}
 	ids := map[string]bool{}
@@ -88,11 +94,19 @@ func LoadRules(r io.Reader) (*RuleSet, error) {
 			}
 		}
 	}
+	for _, sequence := range rules.Sequences {
+		if sequence.ID == "" || sequence.Version == "" || sequence.WithinSeconds <= 0 || sequence.WithinSeconds > 86400 || len(sequence.Steps) < 2 || len(sequence.Steps) > 8 || ids[sequence.ID] { return nil, fmt.Errorf("invalid or duplicate sequence rule %q", sequence.ID) }
+		ids[sequence.ID] = true
+		for _, step := range sequence.Steps {
+			if step.Kind == "" || len(step.All) == 0 || len(step.All) > 32 { return nil, fmt.Errorf("invalid sequence step in %q", sequence.ID) }
+			for _, condition := range step.All { if !knownFields[condition.Field] || condition.Value == "" || (condition.Operator != "equals" && condition.Operator != "contains") { return nil, fmt.Errorf("invalid sequence condition in %q", sequence.ID) } }
+		}
+	}
 	return &rules, nil
 }
 
 var knownFields = map[string]bool{
-	"collection_method": true, "process.pid": true, "process.ppid": true,
+	"collection_method": true, "collection_status": true, "process.pid": true, "process.ppid": true,
 	"process.name": true, "process.executable": true, "process.username": true,
 	"process.start_time": true, "process.command_line": true, "network.protocol": true,
 	"network.local_address": true, "network.local_port": true,
@@ -129,4 +143,14 @@ func (r *RuleSet) Evaluate(e Event) []Match {
 		}
 	}
 	return matches
+}
+
+func (r *RuleSet) EvaluateSequences(events []Event) ([]SequenceMatch, error) {
+	all := []SequenceMatch{}
+	for _, definition := range r.Sequences {
+		matches, err := (SequenceRule{ID: definition.ID, Version: definition.Version, Description: definition.Description, Within: time.Duration(definition.WithinSeconds) * time.Second, Steps: definition.Steps}).EvaluateSequence(events)
+		if err != nil { return nil, err }
+		all = append(all, matches...)
+	}
+	return all, nil
 }

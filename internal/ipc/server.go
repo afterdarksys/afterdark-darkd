@@ -5,11 +5,13 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1038,7 +1040,7 @@ func (s *Server) GetEvents(ctx context.Context, req *pb.GetEventsRequest) (*pb.E
 	if limit <= 0 || limit > 999 {
 		limit = 100
 	}
-	records, err := store.List(ctx, limit+1, false, since, req.GetEventType(), req.GetSeverity())
+	records, err := store.ListRecent(ctx, limit+1, since, req.GetEventType(), req.GetSeverity())
 	if err != nil {
 		return nil, status.Error(codes.Unavailable, err.Error())
 	}
@@ -1048,7 +1050,36 @@ func (s *Server) GetEvents(ctx context.Context, req *pb.GetEventsRequest) (*pb.E
 	}
 	out := &pb.EventsResponse{HasMore: more, TotalCount: int32(len(records))}
 	for _, e := range records {
-		out.Events = append(out.Events, &pb.Event{Id: e.ID, Type: e.Type, Severity: e.Severity, Source: e.Source, Timestamp: &pb.Timestamp{Seconds: e.Time.Unix(), Nanos: int32(e.Time.Nanosecond())}, Metadata: map[string]string{"data": string(e.Data), "endpoint_id": e.Endpoint, "session_id": e.Session}})
+		metadata := map[string]string{
+			"data":              string(e.Data),
+			"endpoint_id":       e.Endpoint,
+			"session_id":        e.Session,
+			"schema_version":    strconv.Itoa(e.SchemaVersion),
+			"collection_status": e.CollectionStatus,
+			"stream_id":         e.StreamID,
+			"sequence":          strconv.FormatInt(e.Sequence, 10),
+			"agent_version":     e.AgentVersion,
+		}
+		if e.BootID != "" {
+			metadata["boot_id"] = e.BootID
+		}
+		if e.CorrelationID != "" {
+			metadata["correlation_id"] = e.CorrelationID
+		}
+		// Entities and facts are already bounded by the durable event envelope.
+		// Keep them structured JSON instead of asking CLI/UI consumers to parse
+		// each source-specific payload independently.
+		if len(e.Entities) > 0 {
+			if encoded, err := json.Marshal(e.Entities); err == nil {
+				metadata["entities"] = string(encoded)
+			}
+		}
+		if len(e.Facts) > 0 {
+			if encoded, err := json.Marshal(e.Facts); err == nil {
+				metadata["facts"] = string(encoded)
+			}
+		}
+		out.Events = append(out.Events, &pb.Event{Id: e.ID, Type: e.Type, Severity: e.Severity, Source: e.Source, Timestamp: &pb.Timestamp{Seconds: e.Time.Unix(), Nanos: int32(e.Time.Nanosecond())}, Metadata: metadata})
 	}
 	return out, nil
 }

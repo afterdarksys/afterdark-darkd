@@ -77,8 +77,52 @@ func TestProvenanceSurvivesRestartAndFailedWrites(t *testing.T) {
 		byID[e.ID] = e
 	}
 	a, b := byID["one"], byID["two"]
-	if a.SchemaVersion != 2 || a.StreamID == "" || a.StreamID != b.StreamID || a.Sequence != 1 || b.Sequence != 2 || a.CollectionStatus != "observed" {
+	if a.SchemaVersion != SchemaVersion || a.StreamID == "" || a.StreamID != b.StreamID || a.Sequence != 1 || b.Sequence != 2 || a.CollectionStatus != "observed" {
 		t.Fatalf("bad provenance: %+v %+v", a, b)
+	}
+}
+
+func TestCollectionStatusIsPreservedAndValidated(t *testing.T) {
+	ctx := context.Background()
+	s := New(filepath.Join(t.TempDir(), "events.db"), "host")
+	if err := s.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop(ctx)
+	if err := s.Publish(ctx, Event{ID: "partial", Source: "fixture", Type: "sensor.health", CollectionStatus: CollectionPartial}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Publish(ctx, Event{ID: "invalid", Source: "fixture", Type: "sensor.health", CollectionStatus: "complete"}); err == nil {
+		t.Fatal("expected invalid collection status to be rejected")
+	}
+	rows, err := s.List(ctx, 10, true, time.Time{}, "", "")
+	if err != nil || len(rows) != 1 {
+		t.Fatal(rows, err)
+	}
+	if rows[0].CollectionStatus != CollectionPartial {
+		t.Fatalf("collection status was rewritten: %+v", rows[0])
+	}
+}
+
+func TestListRecentDoesNotChangeOutboxOrder(t *testing.T) {
+	ctx := context.Background()
+	s := New(filepath.Join(t.TempDir(), "events.db"), "host")
+	if err := s.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop(ctx)
+	for _, id := range []string{"old", "new"} {
+		if err := s.Publish(ctx, Event{ID: id, Source: "fixture", Type: "sensor.health"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recent, err := s.ListRecent(ctx, 10, time.Time{}, "sensor.health", "")
+	if err != nil || len(recent) != 2 || recent[0].ID != "new" || recent[1].ID != "old" {
+		t.Fatal(recent, err)
+	}
+	pending, err := s.List(ctx, 10, true, time.Time{}, "sensor.health", "")
+	if err != nil || len(pending) != 2 || pending[0].ID != "old" || pending[1].ID != "new" {
+		t.Fatal(pending, err)
 	}
 }
 

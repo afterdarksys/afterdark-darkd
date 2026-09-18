@@ -21,6 +21,7 @@ import (
 	"github.com/afterdarksys/afterdark-darkd/internal/service/canary"
 	"github.com/afterdarksys/afterdark-darkd/internal/service/cloud_metadata"
 	"github.com/afterdarksys/afterdark-darkd/internal/service/conntrack"
+	"github.com/afterdarksys/afterdark-darkd/internal/service/coverage"
 	"github.com/afterdarksys/afterdark-darkd/internal/service/device_control"
 	"github.com/afterdarksys/afterdark-darkd/internal/service/dlp"
 	"github.com/afterdarksys/afterdark-darkd/internal/service/dnstunnel"
@@ -502,6 +503,12 @@ func (d *Daemon) InitializeServices() error {
 				d.logger.Error("failed to register registry service", zap.Error(err))
 			}
 		}
+	}
+
+	// Coverage is local evidence, not a remote-forwarding feature. Register it
+	// after native sensors so its initial report reflects their real health.
+	if err := d.registry.Register(coverage.New(d.registry, cfg.Daemon.Mode)); err != nil {
+		return fmt.Errorf("register sensor coverage: %w", err)
 	}
 
 	d.logger.Info("services initialized",

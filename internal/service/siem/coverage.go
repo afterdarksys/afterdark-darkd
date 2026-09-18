@@ -19,13 +19,16 @@ var sensorServices = map[string][]string{
 	"ransomware": {"canary"}, "self_protection": {},
 }
 
-func (s *Service) coverage(ctx context.Context, store *events.Store) error {
+// CollectCoverage writes a local sensor-health evidence event. It deliberately
+// has no dependency on a remote SIEM route: operators need to see blind spots
+// even when endpoint export is disabled.
+func CollectCoverage(ctx context.Context, store *events.Store, registry service.RegistryInterface, deploymentMode string) error {
 	states := map[string]endpointreport.Sensor{}
 	for sensor, names := range sensorServices {
 		observed := endpointreport.Capability(sensor, "unknown", "No registered sensor health report")
 		components := map[string]any{}
 		for _, name := range names {
-			if instance := s.registry.Get(name); instance != nil {
+			if instance := registry.Get(name); instance != nil {
 				health := instance.Health()
 				state := "unknown"
 				switch health.Status {
@@ -71,7 +74,7 @@ func (s *Service) coverage(ctx context.Context, store *events.Store) error {
 	for _, value := range states {
 		list = append(list, value)
 	}
-	raw, err := json.Marshal(map[string]any{"sensors": list, "platform": runtime.GOOS, "deployment_mode": s.config.DeploymentMode})
+	raw, err := json.Marshal(map[string]any{"sensors": list, "platform": runtime.GOOS, "deployment_mode": deploymentMode})
 	if err != nil {
 		return err
 	}

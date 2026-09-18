@@ -91,12 +91,17 @@ func investigateCmd() *cobra.Command {
 			for _, rule := range rules.Rules {
 				counts[rule.ID] = 0
 			}
+			for _, rule := range rules.Sequences {
+				counts[rule.ID] = 0
+			}
 			scanned, matched := 0, 0
+			sequenceEvents := []investigation.Event{}
 			visit := func(e investigation.Event) error {
 				if err := c.Context().Err(); err != nil {
 					return err
 				}
 				scanned++
+				sequenceEvents = append(sequenceEvents, e)
 				matches := rules.Evaluate(e)
 				if len(matches) > 0 {
 					matched++
@@ -126,11 +131,8 @@ func investigateCmd() *cobra.Command {
 				line := 0
 				for scanner.Scan() {
 					line++
-					var e investigation.Event
-					if err := json.Unmarshal(scanner.Bytes(), &e); err != nil {
-						return fmt.Errorf("evidence line %d: %w", line, err)
-					}
-					if err := e.Validate(); err != nil {
+					e, err := investigation.DecodeEvent(scanner.Bytes())
+					if err != nil {
 						return fmt.Errorf("evidence line %d: %w", line, err)
 					}
 					if (f.EndpointID != "" && e.EndpointID != f.EndpointID) || (f.EntityID != "" && e.EntityID != f.EntityID) || (f.Kind != "" && e.Kind != f.Kind) || (!f.Since.IsZero() && e.Timestamp.Before(f.Since)) || (!f.Until.IsZero() && e.Timestamp.After(f.Until)) {
@@ -147,6 +149,20 @@ func investigateCmd() *cobra.Command {
 			}
 			if err != nil {
 				return err
+			}
+			sequenceMatches, err := rules.EvaluateSequences(sequenceEvents)
+			if err != nil {
+				return err
+			}
+			for _, match := range sequenceMatches {
+				matched++
+				counts[match.RuleID]++
+				if err := enc.Encode(struct {
+					Type  string                      `json:"type"`
+					Match investigation.SequenceMatch `json:"match"`
+				}{"sequence_match", match}); err != nil {
+					return err
+				}
 			}
 			return enc.Encode(struct {
 				Type        string         `json:"type"`

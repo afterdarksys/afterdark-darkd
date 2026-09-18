@@ -3,7 +3,6 @@ package siem
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/afterdarksys/afterdark-darkd/internal/api/darkapi"
 	"github.com/afterdarksys/afterdark-darkd/internal/events"
@@ -33,7 +32,6 @@ type Service struct {
 	lastErr       error
 	lastAuxErr    error
 	lastHeartbeat time.Time
-	lastCoverage  time.Time
 	client        *http.Client
 }
 
@@ -141,14 +139,9 @@ func (s *Service) run(ctx context.Context) {
 func (s *Service) forward(ctx context.Context) error {
 	store := s.registry.Get(events.ServiceName).(*events.Store)
 	if cloud := s.config.DarkAPI; cloud != nil && time.Since(s.lastHeartbeat) > time.Minute {
-		var coverageErr error
-		if time.Since(s.lastCoverage) > time.Minute {
-			coverageErr = s.coverage(ctx, store)
-			s.lastCoverage = time.Now()
-		}
 		commandErr := s.commands(ctx, store)
 		s.mu.Lock()
-		s.lastAuxErr = errors.Join(coverageErr, commandErr)
+		s.lastAuxErr = commandErr
 		s.mu.Unlock()
 		if err := cloud.Heartbeat(ctx); err != nil {
 			return err

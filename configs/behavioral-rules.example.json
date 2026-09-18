@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "rules": [
+    {
+      "id": "network-unusual-port",
+      "version": "1.0.0",
+      "description": "Flags an observed outbound connection to a review-required port.",
+      "kind": "network.connect",
+      "all": [
+        { "field": "network.remote_port", "operator": "equals", "value": "4444" }
+      ]
+    }
+  ],
+  "sequences": [
+    {
+      "id": "process-to-network-review",
+      "version": "1.0.0",
+      "description": "Review a process instance when an observed process is followed by a TCP network connection within five minutes. This is evidence for triage, not proof of compromise or authorization for response.",
+      "within_seconds": 300,
+      "steps": [
+        {
+          "kind": "process.observed",
+          "all": [
+            { "field": "process.executable", "operator": "contains", "value": "/" }
+          ]
+        },
+        {
+          "kind": "network.connect",
+          "all": [
+            { "field": "network.protocol", "operator": "equals", "value": "tcp" }
+          ]
+        }
+      ]
+    }
+  ]
+}

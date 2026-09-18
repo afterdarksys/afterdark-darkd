@@ -2,10 +2,13 @@ package ipc
 
 import (
 	"context"
+	"encoding/json"
 	pb "github.com/afterdarksys/afterdark-darkd/api/proto/ipc"
+	"github.com/afterdarksys/afterdark-darkd/internal/events"
 	"github.com/afterdarksys/afterdark-darkd/internal/service"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -116,5 +119,68 @@ func TestUnavailableOperations(t *testing.T) {
 	s.registry = service.NewRegistry()
 	if _, err := s.TriggerScan(ctx, &pb.TriggerScanRequest{ScanType: "bogus"}); status.Code(err) != codes.InvalidArgument {
 		t.Fatal(err)
+	}
+}
+
+func TestGetEventsExposesCanonicalEvidenceMetadata(t *testing.T) {
+	ctx := context.Background()
+	store := events.New(filepath.Join(t.TempDir(), "events.db"), "endpoint-a")
+	if err := store.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer store.Stop(ctx)
+	registry := service.NewRegistry()
+	if err := registry.Register(store); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Publish(ctx, events.Event{
+		ID: "partial-observation", Source: "fixture", Type: "process.observed", Severity: "warning",
+		CollectionStatus: events.CollectionPartial,
+		Entities:         map[string]any{"process": map[string]any{"pid": 41}},
+		Facts:            map[string]any{"collection_method": "polling"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{registry: registry}
+	response, err := server.GetEvents(ctx, &pb.GetEventsRequest{Limit: 10})
+	if err != nil || len(response.Events) != 1 {
+		t.Fatal(response, err)
+	}
+	metadata := response.Events[0].Metadata
+	if metadata["collection_status"] != events.CollectionPartial || metadata["schema_version"] != "2" || metadata["sequence"] != "1" || metadata["endpoint_id"] != "endpoint-a" {
+		t.Fatalf("canonical metadata missing: %#v", metadata)
+	}
+	var entities map[string]any
+	if err := json.Unmarshal([]byte(metadata["entities"]), &entities); err != nil || entities["process"] == nil {
+		t.Fatalf("entities metadata was not structured JSON: %q (%v)", metadata["entities"], err)
+	}
+	var facts map[string]any
+	if err := json.Unmarshal([]byte(metadata["facts"]), &facts); err != nil || facts["collection_method"] != "polling" {
+		t.Fatalf("facts metadata was not structured JSON: %q (%v)", metadata["facts"], err)
+	}
+	if response.Events[0].Timestamp == nil || response.Events[0].Timestamp.Seconds <= 0 {
+		t.Fatalf("event timestamp missing: %#v", response.Events[0])
+	}
+}
+
+func TestGetEventsReturnsNewestEvidenceFirst(t *testing.T) {
+	ctx := context.Background()
+	store := events.New(filepath.Join(t.TempDir(), "events.db"), "endpoint-a")
+	if err := store.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer store.Stop(ctx)
+	registry := service.NewRegistry()
+	if err := registry.Register(store); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"old", "new"} {
+		if err := store.Publish(ctx, events.Event{ID: id, Source: "fixture", Type: "sensor.health"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	response, err := (&Server{registry: registry}).GetEvents(ctx, &pb.GetEventsRequest{Limit: 10})
+	if err != nil || len(response.Events) != 2 || response.Events[0].Id != "new" || response.Events[1].Id != "old" {
+		t.Fatal(response, err)
 	}
 }

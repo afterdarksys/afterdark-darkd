@@ -19,6 +19,22 @@ import (
 const ServiceName = "event_store"
 const MaxPayload = 64 * 1024
 const MaxEvents = 10000
+const SchemaVersion = 2
+
+const (
+	// CollectionObserved says the source collected the described observation. It
+	// does not claim that the source had complete visibility of the endpoint.
+	CollectionObserved = "observed"
+	// CollectionPartial says a source returned usable evidence but could not
+	// complete its requested scope.
+	CollectionPartial = "partial"
+	// CollectionUnavailable says the source could not run on this host or in its
+	// current configuration (for example, a missing OS capability or permission).
+	CollectionUnavailable = "unavailable"
+	// CollectionError says collection failed unexpectedly. Consumers must not
+	// treat it as a negative security result.
+	CollectionError = "error"
+)
 
 // Event retains a stable ID across retries. Data holds source-specific fields.
 type Event struct {
@@ -140,12 +156,20 @@ func (s *Store) publishLocked(ctx context.Context, e Event, receipt *CommandRece
 		return nil
 	}
 	e.Version = 1 // Preserve the existing event-store version field; schema_version governs the new envelope.
-	e.SchemaVersion = 2
+	e.SchemaVersion = SchemaVersion
 	e.BootID = reportBootID()
 	e.AgentVersion = reportAgentVersion()
-	e.CollectionStatus = "observed"
+	if e.CollectionStatus == "" {
+		e.CollectionStatus = CollectionObserved
+	}
+	if !validCollectionStatus(e.CollectionStatus) {
+		return fail(fmt.Errorf("invalid collection status %q", e.CollectionStatus))
+	}
 	e.Endpoint = s.endpoint
 	e.Session = s.session
+	if e.CorrelationID == "" {
+		e.CorrelationID = processCorrelationID(e.Endpoint, e.Entities)
+	}
 	if e.Time.IsZero() {
 		e.Time = time.Now().UTC()
 	}
@@ -201,7 +225,27 @@ func (s *Store) publishLocked(ctx context.Context, e Event, receipt *CommandRece
 	}
 	return tx.Commit()
 }
+
+func validCollectionStatus(status string) bool {
+	switch status {
+	case CollectionObserved, CollectionPartial, CollectionUnavailable, CollectionError:
+		return true
+	default:
+		return false
+	}
+}
 func (s *Store) List(ctx context.Context, limit int, pending bool, since time.Time, kind, severity string) ([]Event, error) {
+	return s.list(ctx, limit, pending, since, kind, severity, false)
+}
+
+// ListRecent returns newest events first for interactive investigation surfaces.
+// Delivery callers use List so unacknowledged evidence remains forwarded in
+// durable chronological order.
+func (s *Store) ListRecent(ctx context.Context, limit int, since time.Time, kind, severity string) ([]Event, error) {
+	return s.list(ctx, limit, false, since, kind, severity, true)
+}
+
+func (s *Store) list(ctx context.Context, limit int, pending bool, since time.Time, kind, severity string, newestFirst bool) ([]Event, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.db == nil {
@@ -226,7 +270,11 @@ func (s *Store) List(ctx context.Context, limit int, pending bool, since time.Ti
 		q += " AND severity=?"
 		args = append(args, severity)
 	}
-	q += " ORDER BY seq LIMIT ?"
+	if newestFirst {
+		q += " ORDER BY seq DESC LIMIT ?"
+	} else {
+		q += " ORDER BY seq LIMIT ?"
+	}
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -279,14 +327,7 @@ func Emit(reg service.RegistryInterface, source, kind, severity string, data int
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	event := Event{Source: source, Type: kind, Severity: severity, Data: payload}
-	if typed, ok := data.(map[string]interface{}); ok {
-		if entities, ok := typed["entities"].(map[string]interface{}); ok {
-			event.Entities = entities
-		}
-		if facts, ok := typed["facts"].(map[string]interface{}); ok {
-			event.Facts = facts
-		}
-	}
+	entities, facts, collectionStatus := normalize(source, data)
+	event := Event{Source: source, Type: kind, Severity: severity, Data: payload, Entities: entities, Facts: facts, CollectionStatus: collectionStatus}
 	return s.Publish(ctx, event)
 }

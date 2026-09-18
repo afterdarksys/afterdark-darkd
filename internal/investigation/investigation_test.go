@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	canonical "github.com/afterdarksys/afterdark-darkd/internal/events"
 	"github.com/afterdarksys/afterdark-darkd/internal/models"
 	"github.com/afterdarksys/afterdark-darkd/internal/service"
 )
@@ -191,6 +192,37 @@ func TestUnknownProcessIdentityAndParentReuse(t *testing.T) {
 	}
 }
 
+func TestCanonicalEvidenceDecodesForRuleReplay(t *testing.T) {
+	now := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
+	canonicalEvent := canonical.Event{
+		SchemaVersion: canonical.SchemaVersion, ID: "canonical", Endpoint: "endpoint-a", Time: now,
+		Source: "connection_tracker", Type: "network.connect", CollectionStatus: canonical.CollectionPartial,
+		CorrelationID: "endpoint-a:41:1789732800000000000",
+		Facts:         map[string]any{"collection_method": "polling", "process.name": "curl", "network.remote_port": 443},
+	}
+	raw, err := json.Marshal(canonicalEvent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, err := DecodeEvent(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.SchemaVersion != SchemaVersion || event.EntityID != canonicalEvent.CorrelationID || event.Fields["network.remote_port"] != "443" || event.Fields["collection_status"] != canonical.CollectionPartial {
+		t.Fatalf("canonical conversion lost evidence: %+v", event)
+	}
+	rules, err := LoadRules(strings.NewReader(`{"schema_version":1,"rules":[{"id":"port","version":"1","kind":"network.connect","all":[{"field":"network.remote_port","operator":"equals","value":"443"},{"field":"collection_status","operator":"equals","value":"partial"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if matches := rules.Evaluate(event); len(matches) != 1 || matches[0].EventID != "canonical" {
+		t.Fatalf("canonical event did not replay: %+v", matches)
+	}
+	if _, err := DecodeEvent([]byte(`{"schema_version":3}`)); err == nil {
+		t.Fatal("unknown canonical schema accepted")
+	}
+}
+
 func TestRulesFailClosed(t *testing.T) {
 	valid := RuleSet{SchemaVersion: 1, Rules: []Rule{{ID: "r", Version: "1", Kind: "process.observed", All: []Condition{{Field: "process.name", Operator: "regex", Value: "^test"}}}}}
 	for _, change := range []func(*RuleSet){
@@ -229,5 +261,32 @@ func TestRulesFailClosed(t *testing.T) {
 	}
 	if _, err := LoadRules(strings.NewReader(`{"schema_version":1,"unknown":true}`)); err == nil {
 		t.Fatal("unknown fields accepted")
+	}
+}
+
+func TestVersionedSequenceRulesLoadAndReplay(t *testing.T) {
+	rules, err := LoadRules(strings.NewReader(`{"schema_version":1,"sequences":[{"id":"chain","version":"1","within_seconds":60,"steps":[{"kind":"process.observed","all":[{"field":"process.name","operator":"equals","value":"curl"}]},{"kind":"network.connect","all":[{"field":"network.remote_port","operator":"equals","value":"443"}]}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	matches, err := rules.EvaluateSequences([]Event{{ID: "p", EntityID: "instance", Timestamp: now, Kind: "process.observed", Fields: map[string]string{"process.name": "curl"}}, {ID: "n", EntityID: "instance", Timestamp: now.Add(time.Second), Kind: "network.connect", Fields: map[string]string{"network.remote_port": "443"}}})
+	if err != nil || len(matches) != 1 || matches[0].RuleID != "chain" {
+		t.Fatalf("sequence replay failed: %#v (%v)", matches, err)
+	}
+	if _, err := LoadRules(strings.NewReader(`{"schema_version":1,"sequences":[{"id":"bad","version":"1","within_seconds":0,"steps":[]}]}`)); err == nil {
+		t.Fatal("invalid sequence accepted")
+	}
+}
+
+func TestBehavioralRuleExampleLoads(t *testing.T) {
+	f, err := os.Open("../../configs/behavioral-rules.example.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	rules, err := LoadRules(f)
+	if err != nil || len(rules.Rules) != 1 || len(rules.Sequences) != 1 {
+		t.Fatalf("example rule pack is invalid: %#v (%v)", rules, err)
 	}
 }

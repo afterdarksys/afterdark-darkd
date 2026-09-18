@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	canonical "github.com/afterdarksys/afterdark-darkd/internal/events"
 	"github.com/afterdarksys/afterdark-darkd/internal/investigation"
 )
 
@@ -97,5 +98,25 @@ func TestInvestigationExportReplayWorkflow(t *testing.T) {
 	partial, err := runInvestigation("replay", "--rules", rules, "--input", input)
 	if err == nil || strings.Contains(partial, `"type":"summary"`) {
 		t.Fatal("malformed evidence reported completed replay")
+	}
+}
+
+func TestInvestigationReplayAcceptsCanonicalEnvelope(t *testing.T) {
+	dir := t.TempDir()
+	rules := filepath.Join(dir, "rules.json")
+	if err := os.WriteFile(rules, []byte(`{"schema_version":1,"rules":[{"id":"curl","version":"1.0","kind":"network.connect","all":[{"field":"process.name","operator":"equals","value":"curl"}]}]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(canonical.Event{SchemaVersion: canonical.SchemaVersion, ID: "canonical", Endpoint: "endpoint-a", Time: time.Now().UTC(), Source: "connection_tracker", Type: "network.connect", CollectionStatus: canonical.CollectionObserved, Facts: map[string]any{"process.name": "curl"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := filepath.Join(dir, "canonical.ndjson")
+	if err := os.WriteFile(input, append(raw, '\n'), 0600); err != nil {
+		t.Fatal(err)
+	}
+	output, err := runInvestigation("replay", "--rules", rules, "--input", input)
+	if err != nil || !strings.Contains(output, `"event_id":"canonical"`) || !strings.Contains(output, `"events_matched":1`) {
+		t.Fatalf("canonical replay failed: %s (%v)", output, err)
 	}
 }

@@ -28,7 +28,7 @@ func TestSharedEndpointContract(t *testing.T) {
 			t.Fatal(err)
 		}
 		event := value
-		if event.SchemaVersion != 2 || event.BootID != "boot-fixture" || event.Sequence != 1 || event.Entities["process"] == nil || len(event.Facts) == 0 {
+		if event.SchemaVersion != SchemaVersion || event.BootID != "boot-fixture" || event.Sequence != 1 || event.Entities["process"] == nil || len(event.Facts) == 0 {
 			t.Fatalf("contract lost: %+v", event)
 		}
 		encoded, err := json.Marshal(value)
