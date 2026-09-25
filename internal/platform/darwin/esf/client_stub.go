@@ -4,7 +4,10 @@
 // Build with -tags esf to enable full EndpointSecurity support.
 package esf
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
 
 // Client is a stub when ESF is not available
 type Client struct{}
@@ -33,13 +36,21 @@ type EventType int
 
 // Event for stub
 type Event struct {
-	Type      EventType
-	PID       int
-	PPID      int
-	UID       uint32
-	SigningID string
-	Sequence  uint64
-	Path      string
+	Type          EventType
+	Kind          string
+	PID           int
+	PPID          int
+	UID           uint32
+	SigningID     string
+	Sequence      uint64
+	Path          string
+	Args          []string
+	ArgsTruncated bool
+	Start         time.Time
+	Responded     bool
 }
+
+// SetAuthorizer is a no-op when the Endpoint Security bridge is not built.
+func SetAuthorizer(func(string, []string, bool, int, int, time.Time) bool) {}
 
 func DroppedEvents() uint64 { return 0 }

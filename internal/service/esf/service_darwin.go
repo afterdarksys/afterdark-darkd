@@ -62,17 +62,20 @@ func (s *Service) Start(ctx context.Context) error {
 		// We return successfully so we don't crash the daemon, but service is "unhealthy"
 		return nil
 	}
+	esf.SetAuthorizer(func(path string, args []string, truncated bool, pid, ppid int, started time.Time) bool {
+		return AuthAllows(ExecObservation{Kind: "auth_exec", Path: path, Args: args, ArgsTruncated: truncated, PID: pid, PPID: ppid, Started: started, Responded: true})
+	})
+	// Queue the journal before subscribing so auth events answered in the
+	// callback are not dropped on the way into the store.
+	client.Start(func(evt esf.Event) {
+		s.handleEvent(evt)
+	})
 
 	if err := client.Subscribe(); err != nil {
 		s.logger.Error("failed to subscribe to ESF events", zap.Error(err))
 		client.Stop()
 		return nil
 	}
-
-	// Start handling events
-	client.Start(func(evt esf.Event) {
-		s.handleEvent(evt)
-	})
 	s.client = client
 	s.running = true
 	s.logger.Info("started ESF monitor")
@@ -81,7 +84,38 @@ func (s *Service) Start(ctx context.Context) error {
 }
 
 func (s *Service) handleEvent(evt esf.Event) {
-	if err := events.Emit(s.registry, ServiceName, "macos.endpoint_security", "info", evt); err != nil {
+	decision := Decide(ExecObservation{
+		Kind: evt.Kind, Path: evt.Path, Args: evt.Args, ArgsTruncated: evt.ArgsTruncated,
+		PID: evt.PID, PPID: evt.PPID, Started: evt.Start, Responded: evt.Responded,
+	})
+	process := map[string]interface{}{"pid": evt.PID, "ppid": evt.PPID}
+	if !evt.Start.IsZero() {
+		process["start_time"] = evt.Start.UTC().Format(time.RFC3339Nano)
+	}
+	if evt.Path != "" && decision.EventType != "file.write" && decision.EventType != "file.unlink" {
+		process["executable"] = evt.Path
+	}
+	entities := map[string]interface{}{"process": process}
+	if evt.Path != "" && (decision.EventType == "file.write" || decision.EventType == "file.unlink") {
+		entities["file"] = map[string]string{"path": evt.Path}
+	}
+	facts := map[string]interface{}{
+		"endpoint_security.kind": evt.Kind,
+		"authorization.action":   decision.Action,
+		"authorization.enforced": decision.Enforced,
+		"authorization.reason":   decision.Reason,
+		"collection_method":      "endpoint_security",
+		"process.pid":            evt.PID,
+	}
+	if !evt.Start.IsZero() {
+		facts["process.start_time"] = evt.Start.UTC().Format(time.RFC3339Nano)
+	}
+	payload := map[string]interface{}{
+		"collection_status": decision.CollectionStatus,
+		"entities":          entities,
+		"facts":             facts,
+	}
+	if err := events.Emit(s.registry, ServiceName, decision.EventType, decision.Severity, payload); err != nil {
 		s.logger.Warn("ES event rejected", zap.Error(err))
 	}
 }
