@@ -20,16 +20,16 @@ func normalize(source string, data interface{}) (map[string]any, map[string]any,
 	status := ""
 	switch value := data.(type) {
 	case models.Process:
-		entities, facts = processFields(value)
+		entities, facts, status = processFields(value)
 	case *models.Process:
 		if value != nil {
-			entities, facts = processFields(*value)
+			entities, facts, status = processFields(*value)
 		}
 	case models.NetworkConnection:
-		entities, facts = connectionFields(value)
+		entities, facts, status = connectionFields(value)
 	case *models.NetworkConnection:
 		if value != nil {
-			entities, facts = connectionFields(*value)
+			entities, facts, status = connectionFields(*value)
 		}
 	case map[string]interface{}:
 		entities, facts, status = mapFields(value)
@@ -41,7 +41,7 @@ func normalize(source string, data interface{}) (map[string]any, map[string]any,
 	// about an entity. This lets detections distinguish polling from native
 	// event streams without parsing source-specific payloads.
 	switch source {
-	case "process_tracker", "connection_tracker":
+	case "process_tracker", "connection_tracker", "integrity_monitor":
 		facts["collection_method"] = "polling"
 	case "ebpf_monitor":
 		facts["collection_method"] = "ebpf"
@@ -57,7 +57,7 @@ func normalize(source string, data interface{}) (map[string]any, map[string]any,
 	return entities, facts, status
 }
 
-func processFields(p models.Process) (map[string]any, map[string]any) {
+func processFields(p models.Process) (map[string]any, map[string]any, string) {
 	process := map[string]any{"pid": p.PID}
 	if p.Name != "" {
 		process["name"] = p.Name
@@ -81,10 +81,14 @@ func processFields(p models.Process) (map[string]any, map[string]any) {
 	if !p.StartTime.IsZero() {
 		facts["process.start_time"] = p.StartTime.UTC().Format(time.RFC3339Nano)
 	}
-	return map[string]any{"process": process}, facts
+	status := ""
+	if p.PID <= 0 || p.StartTime.IsZero() {
+		status = CollectionPartial
+	}
+	return map[string]any{"process": process}, facts, status
 }
 
-func connectionFields(c models.NetworkConnection) (map[string]any, map[string]any) {
+func connectionFields(c models.NetworkConnection) (map[string]any, map[string]any, string) {
 	process := map[string]any{"pid": c.PID}
 	if c.ProcessName != "" {
 		process["name"] = c.ProcessName
@@ -108,7 +112,11 @@ func connectionFields(c models.NetworkConnection) (map[string]any, map[string]an
 	if !c.ProcessStartTime.IsZero() {
 		facts["process.start_time"] = c.ProcessStartTime.UTC().Format(time.RFC3339Nano)
 	}
-	return map[string]any{"process": process, "network": network}, facts
+	status := ""
+	if c.PID <= 0 || c.ProcessStartTime.IsZero() {
+		status = CollectionPartial
+	}
+	return map[string]any{"process": process, "network": network}, facts, status
 }
 
 func mapFields(data map[string]interface{}) (map[string]any, map[string]any, string) {

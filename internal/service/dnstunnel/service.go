@@ -37,6 +37,8 @@ type Service struct {
 
 	// Event callback
 	onTunnelDetected func(*models.DNSTunnelEvent)
+	onQuery          func(models.TunnelDNSQuery)
+	onCapture        func(string, error)
 }
 
 // DNSCapture interface for platform-specific DNS capture
@@ -89,12 +91,14 @@ func (s *Service) Start(ctx context.Context) error {
 	if err != nil {
 		s.logger.Warn("DNS capture initialization failed, using passive mode",
 			zap.Error(err))
+		s.reportCapture(s.config.CaptureMethod, err)
 	}
 
 	// Start capture if available
 	if s.capture != nil {
 		if err := s.capture.Start(ctx); err != nil {
 			s.logger.Warn("DNS capture start failed", zap.Error(err))
+			s.reportCapture(s.config.CaptureMethod, err)
 		} else {
 			go s.processQueries(ctx)
 		}
@@ -239,6 +243,12 @@ func (s *Service) ProcessQuery(q models.TunnelDNSQuery) {
 
 // recordQuery records a DNS query for analysis
 func (s *Service) recordQuery(query models.TunnelDNSQuery) {
+	s.mu.RLock()
+	queryCallback := s.onQuery
+	s.mu.RUnlock()
+	if queryCallback != nil {
+		queryCallback(query)
+	}
 	baseDomain := extractBaseDomain(query.Domain)
 
 	// Skip whitelisted domains
@@ -729,6 +739,32 @@ func (s *Service) OnTunnelDetected(callback func(*models.DNSTunnelEvent)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.onTunnelDetected = callback
+}
+
+// OnQuery receives every captured query, including names later excluded from tunnel stats.
+func (s *Service) OnQuery(callback func(models.TunnelDNSQuery)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onQuery = callback
+}
+
+// OnCapture reports that capture could not start. A nil error is ignored.
+func (s *Service) OnCapture(callback func(string, error)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onCapture = callback
+}
+
+func (s *Service) reportCapture(method string, err error) {
+	if err == nil {
+		return
+	}
+	s.mu.RLock()
+	callback := s.onCapture
+	s.mu.RUnlock()
+	if callback != nil {
+		callback(method, err)
+	}
 }
 
 // Helper functions

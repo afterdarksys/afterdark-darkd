@@ -192,6 +192,20 @@ func (d *Daemon) InitializeServices() error {
 	// 8. DNS tunnel detection (new security feature)
 	if cfg.Services.DNSTunnelDetection.Enabled {
 		dnsSvc := dnstunnel.New(&cfg.Services.DNSTunnelDetection)
+		method := cfg.Services.DNSTunnelDetection.CaptureMethod
+		dnsSvc.OnQuery(func(query models.TunnelDNSQuery) {
+			if err := events.Emit(d.registry, "dns_tunnel_detection", "dns.query", "info", events.DNSEvent(query.Domain, query.RecordType, method, query.ProcessPID, processStart(query.ProcessPID))); err != nil {
+				d.logger.Warn("event rejected", zap.Error(err))
+			}
+		})
+		dnsSvc.OnCapture(func(captureMethod string, captureErr error) {
+			if captureErr == nil {
+				return
+			}
+			if err := events.Emit(d.registry, "dns_tunnel_detection", "dns.capture", "info", events.CaptureUnavailable(captureMethod)); err != nil {
+				d.logger.Warn("event rejected", zap.Error(err))
+			}
+		})
 		dnsSvc.OnTunnelDetected(func(event *models.DNSTunnelEvent) {
 			if err := events.Emit(d.registry, "dns_tunnel_detection", "detection.dns_tunnel", "warning", event); err != nil {
 				d.logger.Warn("event rejected", zap.Error(err))
