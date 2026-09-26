@@ -198,6 +198,7 @@ See [deployments/README.md](deployments/README.md) for details.
 | Document | Description |
 |----------|-------------|
 | [INSTALL](INSTALL) | Installation guide |
+| [docs/CONTROL_STOP.md](docs/CONTROL_STOP.md) | Signed tokens to stop or upgrade the self-protected daemon |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System design |
 | [ROADMAP.md](ROADMAP.md) | Development roadmap |
 | [TODO](TODO) | Current priorities |

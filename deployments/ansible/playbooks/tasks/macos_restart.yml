@@ -1,0 +1,39 @@
+---
+# darkd's Endpoint Security self-protection denies `launchctl kickstart` of
+# itself unless a signed control token has opened its 120 second maintenance
+# window. The operator signs one upgrade token per host, offline, and passes it
+# as the host variable darkd_upgrade_token:
+#   afterdark-darkdadm control sign-stop --key <private key> \
+#     --system-id <host system id> --action upgrade --ttl 15m
+# Tokens are single use and expire; sign them just before the run.
+- name: Require a pre-signed darkd upgrade token
+  assert:
+    that:
+      - darkd_upgrade_token is defined
+      - darkd_upgrade_token | length > 0
+    fail_msg: "darkd_upgrade_token must hold an upgrade token signed offline for this host (afterdark-darkdadm control sign-stop --action upgrade)"
+  no_log: true
+
+- name: Restart darkd through its signed maintenance window
+  block:
+    - name: Stage darkd upgrade token
+      copy:
+        content: "{{ darkd_upgrade_token }}"
+        dest: /var/run/afterdark/darkd-upgrade.token
+        owner: root
+        group: wheel
+        mode: '0600'
+      no_log: true
+
+    - name: Present darkd upgrade token
+      command: /usr/local/bin/afterdark-darkdadm stop --token /var/run/afterdark/darkd-upgrade.token
+      no_log: true
+
+    - name: Restart darkd
+      command: launchctl kickstart -k system/com.afterdarksys.darkd
+  always:
+    - name: Remove darkd upgrade token
+      file:
+        path: /var/run/afterdark/darkd-upgrade.token
+        state: absent
+      no_log: true

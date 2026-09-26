@@ -40,8 +40,10 @@
         state: restarted
       when: ansible_system == "Linux"
 
+    # Presents a signed upgrade token (darkd_upgrade_token) before kickstart;
+    # see tasks/macos_restart.yml.
     - name: restart afterdark-darkd macos
-      command: launchctl kickstart -k system/com.afterdarksys.darkd
+      include_tasks: tasks/macos_restart.yml
       when: ansible_system == "Darwin"
 
     - name: restart afterdark-darkd windows

@@ -63,6 +63,10 @@ sudo cp configs/darkd.yaml.example /etc/afterdark/darkd.yaml
 # Edit configuration
 sudo vim /etc/afterdark/darkd.yaml
 
+# Trust the offline control signing key (required to stop or upgrade later;
+# see docs/CONTROL_STOP.md)
+sudo install -o root -g wheel -m 0644 darkd-control.pub /etc/afterdark/control-stop-keys.pub
+
 # Install launchd service
 sudo cp scripts/service/launchd/com.afterdarksys.darkd.plist /Library/LaunchDaemons/
 sudo launchctl load /Library/LaunchDaemons/com.afterdarksys.darkd.plist
@@ -206,6 +210,9 @@ vim inventory/hosts.yml
 ansible-playbook -i inventory/hosts.yml playbooks/deploy.yml
 ```
 
+Restarting an upgraded macOS host needs a per-host `darkd_upgrade_token`
+signed offline; see [docs/CONTROL_STOP.md](docs/CONTROL_STOP.md).
+
 ### Terraform
 
 ```bash
@@ -225,8 +232,12 @@ terraform apply -var="darkapi_key=$DARKAPI_API_KEY"
 
 ### macOS
 
+darkd's self-protection denies stopping or unloading it without a signed
+control token. Sign a `stop` token offline and present it first; see
+[docs/CONTROL_STOP.md](docs/CONTROL_STOP.md).
+
 ```bash
-sudo launchctl stop com.afterdarksys.darkd
+sudo afterdark-darkdadm stop --token stop.token
 sudo launchctl unload /Library/LaunchDaemons/com.afterdarksys.darkd.plist
 sudo rm /Library/LaunchDaemons/com.afterdarksys.darkd.plist
 sudo rm /usr/local/bin/afterdark-darkd /usr/local/bin/afterdark-darkdadm /usr/local/bin/darkapi

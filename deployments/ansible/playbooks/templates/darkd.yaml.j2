@@ -64,3 +64,6 @@ ipc:
   socket_path: /var/run/afterdark/darkd.sock
   auth_enabled: true
   auth_token_file: {{ afterdark_data_dir }}/.auth_token
+
+control:
+  stop_public_keys_file: {{ afterdark_config_dir }}/control-stop-keys.pub

@@ -81,3 +81,9 @@ ipc:
   socket_path: /var/run/afterdark/darkd.sock
   auth_enabled: true
   auth_token_file: /var/lib/afterdark/.auth_token
+
+# Signed stop/upgrade tokens (docs/CONTROL_STOP.md). The file holds one base64
+# Ed25519 public key per line and must be root-owned and not group/world
+# writable. Without it, darkd cannot be stopped or upgraded on macOS.
+control:
+  stop_public_keys_file: /etc/afterdark/control-stop-keys.pub

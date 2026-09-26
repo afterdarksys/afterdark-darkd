@@ -47,6 +47,15 @@
     mode: '0640'
   notify: restart afterdark-darkd macos
 
+- name: Install trusted darkd control public keys
+  copy:
+    content: "{{ darkd_control_public_keys | join('\n') }}\n"
+    dest: "{{ afterdark_config_dir }}/control-stop-keys.pub"
+    owner: root
+    group: wheel
+    mode: '0644'
+  when: darkd_control_public_keys is defined
+
 - name: Deploy launchd plist
   template:
     src: templates/com.afterdarksys.darkd.plist.j2
