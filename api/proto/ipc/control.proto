@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package ipc;
+
+option go_package = "github.com/afterdarksys/afterdark-darkd/api/proto/ipc";
+
+// ControlStopRequest carries a signed stop or upgrade token, produced offline
+// by `afterdark-darkdadm control sign-stop`. At most 4096 bytes are accepted.
+message ControlStopRequest {
+  bytes token = 1;
+}
+
+// ControlStopResponse never echoes the token or its nonce.
+message ControlStopResponse {
+  string action = 1;
+  string key_fingerprint = 2;
+  int64 window_seconds = 3;
+  string message = 4;
+}
+
+// ControlService is the sanctioned way to stop or upgrade darkd while its
+// Endpoint Security self-protection is enforcing. Callers must be uid 0 on the
+// local socket and hold the IPC bearer token.
+service ControlService {
+  rpc Stop(ControlStopRequest) returns (ControlStopResponse);
+}

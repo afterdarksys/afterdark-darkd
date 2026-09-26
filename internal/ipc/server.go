@@ -17,6 +17,7 @@ import (
 	"time"
 
 	pb "github.com/afterdarksys/afterdark-darkd/api/proto/ipc"
+	"github.com/afterdarksys/afterdark-darkd/internal/control"
 	"github.com/afterdarksys/afterdark-darkd/internal/events"
 	"github.com/afterdarksys/afterdark-darkd/internal/ipc/peercred"
 	"github.com/afterdarksys/afterdark-darkd/internal/plugin"
@@ -73,6 +74,14 @@ type Config struct {
 	// CertDir is the directory where the IPC TLS cert/key are stored.
 	// Auto-generated on first start when TCP mode is enabled.
 	CertDir string
+
+	// Control verifies signed stop/upgrade tokens. Nil rejects every token.
+	Control *control.Controller
+
+	// OnControlStop starts a clean daemon shutdown after an accepted stop
+	// token. It runs on its own goroutine; the graceful IPC stop lets the
+	// accepting RPC finish its reply.
+	OnControlStop func()
 }
 
 // DefaultConfig returns the default IPC configuration
@@ -187,6 +196,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.running = true
 	s.mu.Unlock()
 	pb.RegisterDaemonServiceServer(s.grpcSrv, s)
+	pb.RegisterControlServiceServer(s.grpcSrv, &controlServer{s: s})
 
 	// Start serving
 	go func() {
