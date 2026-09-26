@@ -14,6 +14,10 @@ const ServiceName = "esf_monitor"
 
 type Config struct {
 	Enabled bool `mapstructure:"enabled"`
+	// Maintenance reports whether a signed control token opened the stop
+	// window. It is read on every auth callback and must not block. Nil
+	// means the window is always closed.
+	Maintenance func() bool `mapstructure:"-" yaml:"-" json:"-"`
 }
 
 type Service struct {

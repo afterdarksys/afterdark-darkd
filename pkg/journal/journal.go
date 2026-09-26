@@ -45,6 +45,7 @@ var SensorTypes = []string{
 	"process.observed", "network.connect", "dns.query", "dns.capture",
 	"file.integrity_changed", "file.write", "file.unlink",
 	"endpoint_security.exec", "endpoint_security.fork", "endpoint_security.exit",
+	"endpoint_security.signal",
 }
 
 // Record is one stored observation. Data is the original collector payload.

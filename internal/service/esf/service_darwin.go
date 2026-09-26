@@ -4,6 +4,7 @@ package esf
 
 import (
 	"context"
+	"os"
 	"sync"
 	"time"
 
@@ -18,6 +19,10 @@ const ServiceName = "esf_monitor"
 
 type Config struct {
 	Enabled bool `mapstructure:"enabled"`
+	// Maintenance reports whether a signed control token opened the stop
+	// window. It is read on every auth callback and must not block. Nil
+	// means the window is always closed.
+	Maintenance func() bool `mapstructure:"-" yaml:"-" json:"-"`
 }
 
 type Service struct {
@@ -26,9 +31,12 @@ type Service struct {
 	registry service.RegistryInterface
 
 	client *esf.Client
+	// maintenance is fixed at New; it is read without locks from callbacks.
+	maintenance func() bool
 
 	mu      sync.RWMutex
 	running bool
+	authErr error
 }
 
 func New(config *Config, registry service.RegistryInterface) (*Service, error) {
@@ -36,10 +44,15 @@ func New(config *Config, registry service.RegistryInterface) (*Service, error) {
 		config = &Config{Enabled: true}
 	}
 
+	maintenance := config.Maintenance
+	if maintenance == nil {
+		maintenance = func() bool { return false }
+	}
 	return &Service{
-		config:   config,
-		logger:   logging.With(zap.String("service", ServiceName)),
-		registry: registry,
+		config:      config,
+		logger:      logging.With(zap.String("service", ServiceName)),
+		registry:    registry,
+		maintenance: maintenance,
 	}, nil
 }
 
@@ -62,8 +75,13 @@ func (s *Service) Start(ctx context.Context) error {
 		// We return successfully so we don't crash the daemon, but service is "unhealthy"
 		return nil
 	}
+	maintenance := s.maintenance
 	esf.SetAuthorizer(func(path string, args []string, truncated bool, pid, ppid int, started time.Time) bool {
-		return AuthAllows(ExecObservation{Kind: "auth_exec", Path: path, Args: args, ArgsTruncated: truncated, PID: pid, PPID: ppid, Started: started, Responded: true})
+		return AuthAllows(ExecObservation{Kind: "auth_exec", Path: path, Args: args, ArgsTruncated: truncated, PID: pid, PPID: ppid, Started: started, Responded: true, Maintenance: maintenance()})
+	})
+	self := os.Getpid()
+	esf.SetSignalAuthorizer(func(sender, target, sig int) bool {
+		return DecideSignal(sender, target, self, sig, maintenance())
 	})
 	// Queue the journal before subscribing so auth events answered in the
 	// callback are not dropped on the way into the store.
@@ -76,9 +94,16 @@ func (s *Service) Start(ctx context.Context) error {
 		client.Stop()
 		return nil
 	}
+	if err := client.MuteError(); err != nil {
+		s.logger.Warn("ESF notify client still sees this process", zap.Error(err))
+	}
+	s.authErr = client.AuthError()
+	if s.authErr != nil {
+		s.logger.Error("ESF auth client unavailable; exec and signal protection NOT enforced, notify monitoring continues", zap.Error(s.authErr))
+	}
 	s.client = client
 	s.running = true
-	s.logger.Info("started ESF monitor")
+	s.logger.Info("started ESF monitor", zap.Bool("auth_enforcing", s.authErr == nil))
 
 	return nil
 }
@@ -87,6 +112,8 @@ func (s *Service) handleEvent(evt esf.Event) {
 	decision := Decide(ExecObservation{
 		Kind: evt.Kind, Path: evt.Path, Args: evt.Args, ArgsTruncated: evt.ArgsTruncated,
 		PID: evt.PID, PPID: evt.PPID, Started: evt.Start, Responded: evt.Responded,
+		Answer: evt.Answer, Fallback: evt.Fallback, TargetPID: evt.TargetPID, Signal: evt.Signal,
+		Maintenance: s.maintenance(),
 	})
 	process := map[string]interface{}{"pid": evt.PID, "ppid": evt.PPID}
 	if !evt.Start.IsZero() {
@@ -109,6 +136,13 @@ func (s *Service) handleEvent(evt esf.Event) {
 	}
 	if !evt.Start.IsZero() {
 		facts["process.start_time"] = evt.Start.UTC().Format(time.RFC3339Nano)
+	}
+	if evt.Fallback {
+		facts["authorization.fallback"] = true
+	}
+	if evt.Kind == "auth_signal" {
+		facts["signal.number"] = evt.Signal
+		facts["signal.target_pid"] = evt.TargetPID
 	}
 	payload := map[string]interface{}{
 		"collection_status": decision.CollectionStatus,
@@ -156,12 +190,15 @@ func (s *Service) Health() service.HealthStatus {
 	} else if s.client == nil {
 		status = service.HealthUnhealthy
 		msg = "client failed to init"
+	} else if s.authErr != nil {
+		status = service.HealthDegraded
+		msg = "ESF notify active; auth not enforcing: " + s.authErr.Error()
 	}
 
 	return service.HealthStatus{
 		Status:    status,
 		Message:   msg,
 		LastCheck: time.Now(),
-		Metrics:   map[string]interface{}{"dropped_events": esf.DroppedEvents()},
+		Metrics:   map[string]interface{}{"dropped_events": esf.DroppedEvents(), "auth_enforcing": s.running && s.client != nil && s.authErr == nil},
 	}
 }
