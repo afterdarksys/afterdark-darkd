@@ -48,9 +48,22 @@ type Event struct {
 	ArgsTruncated bool
 	Start         time.Time
 	Responded     bool
+	Answer        string
+	Fallback      bool
+	TargetPID     int
+	Signal        int
 }
 
 // SetAuthorizer is a no-op when the Endpoint Security bridge is not built.
 func SetAuthorizer(func(string, []string, bool, int, int, time.Time) bool) {}
+
+// SetSignalAuthorizer is a no-op when the Endpoint Security bridge is not built.
+func SetSignalAuthorizer(func(int, int, int) bool) {}
+
+// AuthError reports that nothing is enforced without the bridge.
+func (c *Client) AuthError() error { return errors.New("EndpointSecurity not available") }
+
+// MuteError is a stub.
+func (c *Client) MuteError() error { return nil }
 
 func DroppedEvents() uint64 { return 0 }
