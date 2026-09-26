@@ -600,13 +600,15 @@ func serviceCmd() *cobra.Command {
 		},
 	})
 
-	cmd.AddCommand(&cobra.Command{
+	uninstall := &cobra.Command{
 		Use:   "uninstall",
 		Short: "Uninstall system service",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return uninstallSystemService()
 		},
-	})
+	}
+	uninstall.Flags().StringVar(&controlToken, "control-token", "", "signed stop/upgrade token file, or - for stdin (required for launchd)")
+	cmd.AddCommand(uninstall)
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "enable",
@@ -616,13 +618,15 @@ func serviceCmd() *cobra.Command {
 		},
 	})
 
-	cmd.AddCommand(&cobra.Command{
+	disable := &cobra.Command{
 		Use:   "disable",
 		Short: "Disable service from starting on boot",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return disableSystemService()
 		},
-	})
+	}
+	disable.Flags().StringVar(&controlToken, "control-token", "", "signed stop/upgrade token file, or - for stdin (required for launchd)")
+	cmd.AddCommand(disable)
 
 	return cmd
 }
@@ -681,7 +685,10 @@ func installLaunchdService() error {
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
-	<true/>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
 	<key>StandardErrorPath</key>
 	<string>/var/log/afterdark/darkd.log</string>
 	<key>StandardOutPath</key>
@@ -715,8 +722,15 @@ func uninstallSystemService() error {
 		return nil
 	} else if _, err := exec.LookPath("launchctl"); err == nil {
 		plistPath := "/Library/LaunchDaemons/com.afterdark.darkd.plist"
-		exec.Command("launchctl", "unload", plistPath).Run()
-		os.Remove(plistPath)
+		if err := presentControlToken(); err != nil {
+			return err
+		}
+		if err := exec.Command("launchctl", "unload", plistPath).Run(); err != nil {
+			return fmt.Errorf("failed to unload service: %w", err)
+		}
+		if err := os.Remove(plistPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to remove plist: %w", err)
+		}
 		fmt.Println("Launchd service uninstalled")
 		return nil
 	}
@@ -758,6 +772,9 @@ func disableSystemService() error {
 		return nil
 	} else if _, err := exec.LookPath("launchctl"); err == nil {
 		plistPath := "/Library/LaunchDaemons/com.afterdark.darkd.plist"
+		if err := presentControlToken(); err != nil {
+			return err
+		}
 		cmd := exec.Command("launchctl", "unload", plistPath)
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("failed to unload service: %w", err)

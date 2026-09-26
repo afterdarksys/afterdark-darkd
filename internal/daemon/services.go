@@ -473,7 +473,8 @@ func (d *Daemon) InitializeServices() error {
 	// 25. ESF Endpoint Security (macOS only)
 	if cfg.Services.ESF.Enabled {
 		esfCfg := &esf.Config{
-			Enabled: cfg.Services.ESF.Enabled,
+			Enabled:     cfg.Services.ESF.Enabled,
+			Maintenance: d.control.Window().Open,
 		}
 
 		esfSvc, err := esf.New(esfCfg, d.registry)

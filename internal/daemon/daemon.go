@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/afterdarksys/afterdark-darkd/internal/control"
+	"github.com/afterdarksys/afterdark-darkd/internal/identity"
 	"github.com/afterdarksys/afterdark-darkd/internal/ipc"
 	"github.com/afterdarksys/afterdark-darkd/internal/models"
 	"github.com/afterdarksys/afterdark-darkd/internal/plugin"
@@ -73,6 +75,9 @@ type Daemon struct {
 
 	// Admin web UI
 	webServer *web.Server
+
+	// Signed stop/upgrade control and its maintenance window
+	control *control.Controller
 }
 
 // New creates a new daemon instance
@@ -90,8 +95,26 @@ func New(cfg *models.Config) (*Daemon, error) {
 	}
 	pluginHost := plugin.NewHost(pluginDir, logger)
 
+	// Signed stop/upgrade control. The window is read by the Endpoint
+	// Security authorizer; without a usable key no token is ever accepted.
+	keysFile := cfg.Control.StopPublicKeysFile
+	if keysFile == "" {
+		keysFile = control.DefaultKeysFile
+	}
+	controller, err := control.New(control.Config{
+		KeysFile:  keysFile,
+		KeysOwner: 0,
+		NonceFile: filepath.Join(cfg.Storage.Path, control.NonceFileName),
+		SystemID:  loadSystemID,
+		Window:    control.NewWindow(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize control: %w", err)
+	}
+
 	// Initialize IPC server
 	ipcConfig := &ipc.Config{
+		Control:                controller,
 		PluginHost:             pluginHost,
 		RequirePeerCredentials: cfg.IPC.TCPAddr == "",
 		SocketPath:             cfg.IPC.SocketPath,
@@ -111,7 +134,7 @@ func New(cfg *models.Config) (*Daemon, error) {
 
 	workflowWeb := web.New(registry, logger, cfg.IPC.AuthTokenFile)
 	workflowWeb.ConfigureWorkflows(filepath.Join(cfg.Daemon.DataDir, "workflows"), cfg.Daemon.WorkflowEvidenceDir)
-	return &Daemon{
+	d := &Daemon{
 		config:     cfg,
 		registry:   registry,
 		state:      StateInit,
@@ -122,7 +145,30 @@ func New(cfg *models.Config) (*Daemon, error) {
 		shutdownCh: make(chan struct{}),
 		doneCh:     make(chan struct{}),
 		pidFile:    cfg.Daemon.PIDFile,
-	}, nil
+		control:    controller,
+	}
+	ipcConfig.OnControlStop = func() {
+		d.logger.Warn("signed stop token accepted; shutting down")
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := d.Stop(ctx); err != nil {
+			d.logger.Error("control stop failed", zap.Error(err))
+		}
+	}
+	return d, nil
+}
+
+// loadSystemID returns the persisted endpoint identity. It never creates one:
+// a token cannot name an identity that does not exist yet.
+func loadSystemID() (string, error) {
+	id, err := identity.LoadIdentity()
+	if err != nil {
+		return "", err
+	}
+	if id == nil || id.SystemID == "" {
+		return "", fmt.Errorf("no system identity has been created")
+	}
+	return id.SystemID, nil
 }
 
 // Config returns the daemon configuration
@@ -298,6 +344,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 			defer cancel()
 			return d.Stop(shutdownCtx)
 		case <-d.shutdownCh:
+			// Stop was started elsewhere (a signed stop token); let it finish.
+			d.Wait()
 			return nil
 		}
 	}

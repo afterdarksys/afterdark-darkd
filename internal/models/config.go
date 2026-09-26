@@ -14,6 +14,14 @@ type Config struct {
 	Services ServicesConfig `yaml:"services" json:"services"`
 	Storage  StorageConfig  `yaml:"storage" json:"storage"`
 	IPC      IPCConfig      `yaml:"ipc" json:"ipc"`
+	Control  ControlConfig  `yaml:"control" json:"control"`
+}
+
+// ControlConfig configures the signed stop/upgrade path. The keys file holds
+// one base64 Ed25519 public key per line and must be root-owned and not
+// group/world-writable. With no usable key darkd cannot be stopped through it.
+type ControlConfig struct {
+	StopPublicKeysFile string `yaml:"stop_public_keys_file" json:"stop_public_keys_file"`
 }
 
 // DaemonConfig holds daemon-specific configuration
